@@ -1,19 +1,22 @@
-"""PLACEHOLDER territory seed (task 1.4). NOT REAL DATA.
+"""Demo territory seed. Buildings and zips are REAL BERDO rows; enrollment is simulated.
 
-Every value in this module is a hardcoded placeholder, chosen only so the
-account rows added in task 1.5 have valid foreign keys to reference. No dataset,
-network call, geocoder, or fixture is read. Task 1b replaces these rows with the
-real territory (BERDO buildings, zip-to-utility mapping, EJ zips). Until then,
-every seeded row carries `simulated=True` where the table has that column.
+The three seeded buildings (129860, 114120, 100901) and their zips
+(02128/02132/02136) are real BERDO records read from fixtures/berdo.json via
+`server.data.buildings_by_id`, so the demo facility accounts point at building
+ids that actually exist in `server/data.py`. The EJ flags come from
+`server.data.EJ_ZIPS` (02128 and 02136 are EJ; 02132 is not). The utility and
+zip-to-utility rows remain a single demo utility. Enrollment status and
+capacity are still simulated demo values, so every building row carries
+`simulated=True`.
 
 Run from the repository root after `alembic upgrade head`:
 
     python -m db.seed
 
 Seeding is idempotent: rows are upserted by primary key, so re-running updates
-the placeholder rows in place and never duplicates them. Foreign keys are
-enforced for the seed's session, and a violation aborts the whole seed with an
-error that names the offending row.
+the rows in place and never duplicates them. Foreign keys are enforced for the
+seed's session, and a violation aborts the whole seed with an error that names
+the offending row.
 """
 
 from __future__ import annotations
@@ -34,23 +37,27 @@ from db.models import (
     Zip,
     ZipUtility,
 )
+from server.data import buildings_by_id
 
-# --- PLACEHOLDER constants. Replaced by task 1b. Not real Massachusetts data. ---
+# --- Demo territory constants. Buildings/zips are real BERDO rows; the utility
+# and enrollment are simulated demo values. ---
 
-# Placeholder zip codes sit outside the real MA range (01xxx-02xxx), so no one
-# can mistake them for a real zip's EJ status.
-PLACEHOLDER_ZIP_EJ = "00001"
-PLACEHOLDER_ZIP_PROTECTED = "00002"
-PLACEHOLDER_ZIP_THIRD = "00003"
+# Real Boston BERDO zips. EJ flags match server.data.EJ_ZIPS: 02128 and 02136
+# are EJ; 02132 is not.
+PLACEHOLDER_ZIP_EJ = "02128"
+PLACEHOLDER_ZIP_PROTECTED = "02132"
+PLACEHOLDER_ZIP_THIRD = "02136"
 
-PLACEHOLDER_SOURCE_ID = "PLACEHOLDER:task-1.4"
+PLACEHOLDER_SOURCE_ID = "berdo:fixtures/berdo.json"
 PLACEHOLDER_UTILITY_ID = "placeholder-utility"
 PLACEHOLDER_UTILITY_NAME = "PLACEHOLDER Utility (demo only)"
 
-PLACEHOLDER_BUILDING_IDS = ("PH-BLDG-1", "PH-BLDG-2", "PH-BLDG-3")
-PLACEHOLDER_PROTECTED_BUILDING_ID = "PH-BLDG-2"
+# Real BERDO building ids, read from fixtures/berdo.json at seed time. Index 0
+# ('129860') is the building seed_demo_event wires its approved event to.
+PLACEHOLDER_BUILDING_IDS = ("129860", "114120", "100901")
+PLACEHOLDER_PROTECTED_BUILDING_ID = "114120"
 PLACEHOLDER_PROTECTED_REASON = (
-    "PLACEHOLDER: flagged protected for the demo. Replace with real data in task 1b."
+    "Simulated demo flag: this building is marked protected for the demo only."
 )
 
 # --- DEMO-ONLY credentials (task 1.5). Plaintext lives here for the README and
@@ -118,7 +125,7 @@ def seed_placeholder_territory(session: Session) -> None:
     zips = (
         (PLACEHOLDER_ZIP_EJ, True),
         (PLACEHOLDER_ZIP_PROTECTED, False),
-        (PLACEHOLDER_ZIP_THIRD, False),
+        (PLACEHOLDER_ZIP_THIRD, True),
     )
     for zip_code, ej in zips:
         _upsert(
@@ -149,6 +156,8 @@ def seed_placeholder_territory(session: Session) -> None:
             f"zip_utility row {zip_code!r}",
         )
 
+    # Real BERDO data per building, keyed by id. Missing fields fall back to None.
+    records = buildings_by_id()
     buildings = (
         {
             "id": PLACEHOLDER_BUILDING_IDS[0],
@@ -177,17 +186,18 @@ def seed_placeholder_territory(session: Session) -> None:
     )
     for spec in buildings:
         building_id = spec["id"]
+        record = records.get(building_id)
         _upsert(
             session,
             Building,
             building_id,
             {
                 **spec,
-                "address": f"PLACEHOLDER address for {building_id} (not a real building)",
-                "property_type": None,
-                "gross_area_sf": None,
-                "site_eui": None,
-                "per_electricity": None,
+                "address": getattr(record, "address", None),
+                "property_type": getattr(record, "property_type", None),
+                "gross_area_sf": getattr(record, "gross_area_sf", None),
+                "site_eui": getattr(record, "site_eui_kbtuft2", None),
+                "per_electricity": getattr(record, "per_electricity", None),
                 "lng": None,
                 "lat": None,
                 "geocode_status": None,
@@ -306,9 +316,9 @@ def main() -> None:
         seed_demo_accounts(session)
         seed_demo_event(session)
     print(
-        "Seeded PLACEHOLDER territory (task 1.4), demo accounts (task 1.5), and "
-        "a demo approved event with a chat thread target. Replace with real data "
-        "in task 1b."
+        "Seeded demo territory (real BERDO buildings 129860/114120/100901 and "
+        "zips 02128/02132/02136), demo accounts, and a demo approved event with "
+        "a chat thread target. Enrollment and capacity are simulated."
     )
 
 
