@@ -119,7 +119,7 @@ in `server/constants.py`.
 
 ## Demo URL
 
-TODO
+
 
 ## Video
 
@@ -127,7 +127,9 @@ TODO
 
 ## Team and Representative
 
-TODO
+Sanchali Banerjee
+Sophie Cheung
+Nicole Zheng
 
 ---
 
