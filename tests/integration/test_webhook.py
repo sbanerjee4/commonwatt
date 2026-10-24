@@ -14,7 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from db.models import Base, Building, EventBuilding, Reply, User, Utility, Event
+from db.models import Base, Building, Reply, User, Utility, Event, Zip
+from db.models import PlanBuilding as EventBuilding
 
 AUTH_TOKEN = "test_token"
 URL = "https://commonwatt.example.com/sms/inbound"
@@ -34,17 +35,24 @@ def client(monkeypatch):
     session = Session(engine, expire_on_commit=False)
 
     # Seed: utility, building, manager with a phone, an approved open event.
-    util = Utility(name="MA")
-    bld = Building(name="Elm", kw_enrolled=100, kw_requested=20)
+    import datetime as _dt
+    _now = _dt.datetime(2026, 7, 1, 14, 0, tzinfo=_dt.timezone.utc)
+    session.add(Zip(zip="00001", ej=False))
+    util = Utility(id="util-ma", name="MA", source_id="sim:util-ma")
+    bld = Building(id="bld-elm", zip="00001", address="1 Elm St",
+                   enrolled=True, enrolled_capacity_kw=100, offered_capacity_kw=20)
     session.add_all([util, bld])
     session.commit()
     mgr = User(email="m@x.test", role="building_manager",
-               building_id=bld.id, phone="+12025550100")
+               building_id=bld.id, phone="+12025550100", password_hash="x")
     session.add(mgr)
-    ev = Event(utility_id=util.id, status="approved", window_label="Tue")
+    ev = Event(utility_id=util.id, status="approved", window_label="Tue",
+               window_start=_now, window_end=_now + _dt.timedelta(hours=4),
+               target_mw=150, cap_pct=25, current_version=1)
     session.add(ev)
     session.commit()
-    session.add(EventBuilding(event_id=ev.id, building_id=bld.id))
+    session.add(EventBuilding(event_id=ev.id, plan_version=ev.current_version,
+                              building_id=bld.id, kw_requested=20))
     session.commit()
 
     from app.main import app

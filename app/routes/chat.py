@@ -24,7 +24,7 @@ from notify.validation import parse_reply_body
 router = APIRouter()
 
 
-def _require_building_access(role: str, user: User, building_id: int) -> None:
+def _require_building_access(role: str, user: User, building_id: str) -> None:
     """A building session may only touch its own building; operators may touch any."""
     if role == "operator":
         return
@@ -41,7 +41,7 @@ def _load_caller(db, user_id: int | None) -> User | None:
 
 @router.get("/inbox/{building_id}", tags=["chat"])
 async def get_thread(
-    building_id: int,
+    building_id: str,
     db=Depends(get_db),
     x_user_id: int | None = Header(default=None),
     x_role: str = Header(default="building_manager"),
@@ -72,7 +72,7 @@ async def get_thread(
 
 @router.get("/inbox/{building_id}/unread", tags=["chat"])
 async def unread_count(
-    building_id: int,
+    building_id: str,
     since: int = 0,
     db=Depends(get_db),
     x_user_id: int | None = Header(default=None),
@@ -96,7 +96,7 @@ async def unread_count(
 
 @router.post("/inbox/{building_id}/close", tags=["chat"])
 async def close_thread(
-    building_id: int,
+    building_id: str,
     db=Depends(get_db),
     x_user_id: int | None = Header(default=None),
     x_role: str = Header(default="operator"),
@@ -111,12 +111,12 @@ async def close_thread(
     from datetime import datetime, timezone
     event.closed_at = datetime.now(timezone.utc)
     db.add(AuditLog(user_id=x_user_id, event_id=event.id,
-                    action="chat_thread_closed", reason=None, provider="inapp"))
+                    action="chat_thread_closed", detail=None, provider="inapp"))
     db.commit()
     return {"ok": True, "event_id": event.id, "closed": True}
 
 
-def _open_event_for_building(db, building_id: int):
+def _open_event_for_building(db, building_id: str):
     stmt = (
         select(Event)
         .where(Event.status == "approved", Event.closed_at.is_(None))
@@ -130,7 +130,7 @@ def _open_event_for_building(db, building_id: int):
 
 @router.post("/inbox/{building_id}/reply", tags=["chat"])
 async def building_reply(
-    building_id: int,
+    building_id: str,
     request: Request,
     db=Depends(get_db),
     x_user_id: int | None = Header(default=None),
@@ -166,7 +166,7 @@ async def building_reply(
 
     db.add(AuditLog(user_id=x_user_id, event_id=event.id,
                     action="chat_building_reply",
-                    reason=(recorded["kind"] if recorded else "free_text"),
+                    detail=(recorded["kind"] if recorded else "free_text"),
                     provider="inapp"))
     db.commit()
     return {"ok": True, "parsed_reply": recorded}
@@ -174,7 +174,7 @@ async def building_reply(
 
 @router.post("/inbox/{building_id}/operator-message", tags=["chat"])
 async def operator_message(
-    building_id: int,
+    building_id: str,
     request: Request,
     db=Depends(get_db),
     x_user_id: int | None = Header(default=None),
@@ -205,7 +205,7 @@ async def operator_message(
     db.add(Message(event_id=event.id, building_id=building_id,
                    sender_role="operator", sender_user_id=x_user_id, body=body))
     db.add(AuditLog(user_id=x_user_id, event_id=event.id,
-                    action="chat_operator_message", reason="takeover",
+                    action="chat_operator_message", detail="takeover",
                     provider="inapp"))
     db.commit()
 

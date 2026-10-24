@@ -25,7 +25,7 @@ def _audit(db, *, user_id, event_id, action, reason, provider):
             user_id=user_id,
             event_id=event_id,
             action=action,
-            reason=reason,
+            detail=reason,
             provider=provider,
         )
     )
