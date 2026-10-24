@@ -9,8 +9,40 @@ Climate
 ## One-line description
 
 An equity-constrained demand-response planner for Massachusetts utilities: it
-decides which buildings to ask to reduce load on a peak day, leans on the ones that can most afford it, spares lower-income neighborhoods, keeps the burden
-off the same neighborhoods, and leaves every call to a human.
+decides which buildings to ask to reduce load on a peak day, leans on the ones
+that can most afford it, spares lower-income neighborhoods, and leaves every
+call to a human.
+
+## Built with Kiro
+
+Commonwatt was built end-to-end with **Kiro**, and it shaped how the whole
+project came together. We went spec-first: the requirements, design, and tasks
+were committed to `.kiro/specs/` **before** a line of code, and every feature
+traces back to that spec. Kiro steering files (`safety.md`, `provenance.md`,
+`stack.md`) acted as guardrails the agent never crossed — every user-facing
+number carries a source id, and no message ever says cut or disconnect because
+the steering forbade it.
+
+The heart of the app is the **Commonwatt MCP server** — the same deterministic,
+property-tested tool server that Kiro used during development is the one the
+running app calls at runtime. Agent hooks ran our property tests on every save,
+so a broken equity invariant was caught the instant it appeared. We crystallized
+the data-wrangling workflow into a reusable Kiro skill. In short: spec-driven
+development, MCP, steering, agent hooks, and property-based testing, all the way
+through. We loved building with Kiro.
+
+## Stack
+
+| Layer | Tech |
+| ----- | ---- |
+| Front-end | React 18, TypeScript, Vite, TanStack Query, MapLibre GL |
+| API | FastAPI (single app), Pydantic |
+| Agents | Claude via Amazon Bedrock (planner, critic, building chat) |
+| Tools | Commonwatt MCP server (FastMCP), 11 deterministic tools |
+| Data | SQLite / Postgres, committed public fixtures (BERDO, Census ACS, geocodes) |
+| Testing | pytest + Hypothesis (property-based), 58 tests |
+| Built with | **Kiro** — spec-driven dev, MCP, steering, agent hooks, PBT, skills |
+| Deploy | Render (backend), Vercel (front-end) |
 
 ## What it does
 
