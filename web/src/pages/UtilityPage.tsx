@@ -43,7 +43,12 @@ function MapPanel() {
     >
       <div className="map-placeholder grid-view">
         {zips.isLoading && <p className="caption">Loading zip aggregates…</p>}
-        {zips.isError && <p className="caption">Could not reach the BFF. Is `make bff` running on :8000?</p>}
+        {zips.isError && (
+          <p className="caption">
+            Could not reach the API. Locally, run `make serve` (port 8000). On a deployed site, set
+            VITE_API_BASE_URL to the backend URL.
+          </p>
+        )}
         {zips.data && (
           <div className="grid-map" aria-label="Zip aggregates from the portfolio">
             {zips.data.zips.slice(0, 12).map((z, index) => (
