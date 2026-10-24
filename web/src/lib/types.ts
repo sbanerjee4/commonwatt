@@ -8,6 +8,9 @@ export type ZipAggregate = {
   buildingCount: number
   curtailableLoadKw: SourcedNumber | null
   ejStatus: 'ej' | 'non_ej' | 'unknown'
+  medianIncome?: number | null
+  affluenceTier?: 'low' | 'middle' | 'high' | 'unknown'
+  incomeSourceId?: string | null
   cumulativeCalls: number
   hasGeometry: boolean
 }
@@ -31,6 +34,10 @@ export type BuildingMarker = {
   propertyType: string | null
   grossAreaSf: number | null
   curtailableLoadKw: BuildingMarkerLoad | null
+  affluenceTier?: 'low' | 'middle' | 'high' | 'unknown'
+  medianIncome?: number | null
+  canAbsorb?: boolean
+  shouldProtect?: boolean
 }
 
 export type ZipBuildingsResponse = {

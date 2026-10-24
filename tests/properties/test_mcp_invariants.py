@@ -220,3 +220,59 @@ def test_score_equity_sum():
         result["total_load_kw"], rel=0.01
     )
     assert result.get("source_id"), "score_equity missing source_id"
+
+
+# ---------------------------------------------------------------------------
+# Socioeconomic equity invariants
+# ---------------------------------------------------------------------------
+
+from server.tools import score_socioeconomic, plan_event as _plan_event
+
+
+@given(
+    target_mw=st.floats(min_value=1.0, max_value=25.0),
+)
+@settings(max_examples=20, deadline=60_000)
+def test_plan_prefers_affordable_over_low_income(target_mw):
+    """
+    The equity-corrected plan should not lean on low-income residents: the
+    low-income RESIDENTIAL load share must stay modest. Commercial buildings in
+    any area are a fair ask; low-income *homes* are what we protect.
+    """
+    result = _plan_event(target_mw=target_mw, ej_cap_pct=0.35, respect_ej_cap=True)
+    ids = [b["building_id"] for b in result["portfolio"]]
+    if not ids:
+        return
+    socio = score_socioeconomic(ids)
+    # Protecting low-income residents is the whole point: their residential
+    # share should never dominate a fair plan.
+    assert socio["low_income_residential_share_pct"] <= 50.0, (
+        f"plan leans too hard on low-income residents: "
+        f"{socio['low_income_residential_share_pct']}%"
+    )
+
+
+def test_score_socioeconomic_has_source_and_sums():
+    """score_socioeconomic carries the income source id and tier shares are sane."""
+    ids = _get_sample_building_ids(30)
+    s = score_socioeconomic(ids)
+    assert s["source_id"], "missing income source id"
+    shares = s["load_share_pct_by_tier"]
+    total = sum(shares.values())
+    # tier shares should sum to ~100 (allowing rounding) when there is load
+    if s["total_load_kw"] > 0:
+        assert 95.0 <= total <= 105.0, f"tier shares sum to {total}"
+
+
+def test_socioeconomic_priority_ordering():
+    """A high-income commercial building outranks a low-income residential one."""
+    from server.data import load_buildings
+    bs = load_buildings()
+    hi_commercial = next(
+        (b for b in bs if b.affluence_tier == "high" and b.is_commercial
+         and not b.is_protected), None)
+    low_resid = next(
+        (b for b in bs if b.affluence_tier == "low" and not b.is_commercial
+         and not b.is_protected), None)
+    if hi_commercial and low_resid:
+        assert hi_commercial.socioeconomic_priority > low_resid.socioeconomic_priority
