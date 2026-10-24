@@ -18,7 +18,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-import anthropic
+from anthropic import AnthropicBedrock
+from agent.llm import get_client, get_model_id
 
 from server.tools import building_info, estimate_savings
 from agent.prompts import BUILDING_CHAT_SYSTEM
@@ -77,10 +78,10 @@ class ChatSession:
     building_id: str
     event_context: dict | None = None  # set when a live event is asking this building
     _history: list[dict] = field(default_factory=list)
-    _client: anthropic.Anthropic = field(init=False)
+    _client: AnthropicBedrock = field(init=False)
 
     def __post_init__(self) -> None:
-        self._client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        self._client = get_client()
 
     def _system_prompt(self) -> str:
         base = BUILDING_CHAT_SYSTEM
@@ -109,7 +110,7 @@ class ChatSession:
 
         while True:
             response = self._client.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model=get_model_id(),
                 max_tokens=2048,
                 system=self._system_prompt(),
                 tools=CHAT_TOOLS,

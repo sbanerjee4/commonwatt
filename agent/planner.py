@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-import anthropic
+from agent.llm import get_client, get_model_id
 
 from server.tools import (
     backfill,
@@ -166,7 +166,7 @@ def run_planner(
     """
     Run the planner → critic loop and return a PlanResult with a full trace.
     """
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    client = get_client()
     trace: list[TraceStep] = []
     version = 0
     current_plan: EventPlan | None = None
@@ -206,7 +206,7 @@ def run_planner(
         # Agentic loop: let planner call tools
         while True:
             response = client.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model=get_model_id(),
                 max_tokens=4096,
                 system=PLANNER_SYSTEM,
                 tools=PLANNER_TOOLS,
@@ -307,7 +307,7 @@ def run_planner(
         ]
 
         critic_response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model=get_model_id(),
             max_tokens=1024,
             system=CRITIC_SYSTEM,
             messages=critic_messages,
