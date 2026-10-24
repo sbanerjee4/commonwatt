@@ -25,7 +25,7 @@ export function BuildingPage() {
 
   const building = useQuery({
     queryKey: ['building', DEMO_BUILDING_ID],
-    queryFn: () => apiGet<BuildingProfile>(`/buildings/${DEMO_BUILDING_ID}`),
+    queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${DEMO_BUILDING_ID}`),
   })
 
   const profile = building.data
