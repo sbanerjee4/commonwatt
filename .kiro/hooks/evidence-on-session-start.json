@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "evidence-on-session-start",
+      "trigger": "SessionStart",
+      "description": "Append one evidence snapshot to KIRO.md at the start of each Kiro session.",
+      "action": {
+        "type": "agent",
+        "prompt": "Run `make evidence`. Reply with one line confirming the snapshot timestamp."
+      }
+    }
+  ]
+}

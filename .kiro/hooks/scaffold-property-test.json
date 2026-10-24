@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "scaffold-property-test",
+      "trigger": "PostFileCreate",
+      "description": "Scaffold a Hypothesis property test for a new MCP tool.",
+      "matcher": "^mcp/tools/[^/]+\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "The user created a file under mcp/tools/. If tests/properties/test_<name>.py does not exist, create it with a Hypothesis skeleton: imports, one strategy placeholder, and one test function named test_<name>_invariant containing a TODO that names the invariant from design.md it must cover. Do not write assertions beyond the TODO."
+      }
+    }
+  ]
+}

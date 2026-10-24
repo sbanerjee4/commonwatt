@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "golden-trace-replay",
+      "trigger": "PostFileSave",
+      "description": "Replay the heat-day scenario and diff against the golden trace.",
+      "matcher": "^agent/(planner|critic)\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "The user saved agent/planner.py or agent/critic.py. Run the heat-day scenario end to end with `make replay`, then diff the produced trace against tests/golden/trace.jsonl. Report any step where plan version, EJ share, tool name, or tool order changed. Do not modify any file."
+      }
+    }
+  ]
+}

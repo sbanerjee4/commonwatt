@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "safety-wording-check",
+      "trigger": "PostFileSave",
+      "description": "Check user-facing text for prohibited safety wording.",
+      "matcher": "^(web/src/.*\\.(ts|tsx)|(.*/)?notify/templates\\.py)$",
+      "action": {
+        "type": "agent",
+        "prompt": "The user saved a web/src TypeScript file or notify/templates.py. Scan user-facing strings in the saved file for \"cut\", \"shut off\", \"curtail\", and \"disconnect\". For each hit, report the file, line, and the rule from .kiro/steering/safety.md. Suggest a replacement using \"asked to reduce\" or \"event participation\". Do not modify any file."
+      }
+    }
+  ]
+}

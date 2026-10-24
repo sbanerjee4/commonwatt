@@ -1,4 +1,5 @@
-.PHONY: setup demo test
+
+.PHONY: setup demo test presubmit evidence
 
 setup:
 	echo "TODO"
@@ -8,3 +9,10 @@ demo:
 
 test:
 	echo "TODO"
+
+presubmit:
+	./scripts/presubmit.sh
+
+evidence:
+	./scripts/evidence.sh
+

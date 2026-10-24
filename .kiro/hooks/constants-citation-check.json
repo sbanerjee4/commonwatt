@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "constants-citation-check",
+      "trigger": "PostFileSave",
+      "description": "Verify constants cite sources and regenerate the constants table.",
+      "matcher": "^data/constants\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "The user saved data/constants.py. Verify every constant has a docstring containing a source URL, and list any that lack one. Then regenerate docs/constants.md as a table with columns name, value, unit, and source URL. Only docs/constants.md may be written."
+      }
+    }
+  ]
+}

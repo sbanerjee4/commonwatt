@@ -17,3 +17,4 @@
 | Oct 24 | Uncited constants carry no value; dependent figures return "unavailable" | Provenance rule forbids invented rates | Placeholder values |
 | Oct 24 | Edit list is a constrained re-solve; Approve disabled on unreachable plans | An edited or short plan cannot bypass the critic | Free-form list edit |
 | Oct 24 | design.md headings renamed to "Components and Interfaces" and "Data Models" | Spec format validator requires those names | "Components", "Data Sources" |
+| Oct 24 | This Kiro version has no manual hook trigger; deterministic checks moved to scripts/ as make targets and a pre-commit hook; evidence snapshot runs on SessionStart; fix-proposal folded into the on-save test hook with an approval gate. | Only the supported triggers can run hooks, and scripts run the same way with or without the agent | Manual-trigger hooks (fix-failing-property, evidence-snapshot, pre-submit-check) |
