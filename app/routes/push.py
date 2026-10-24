@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.db import get_db
+from app.deps import current_user
+from db.models import User
 from notify.push import save_subscription
 
 router = APIRouter()
@@ -22,16 +24,14 @@ async def public_key():
 async def subscribe(
     request: Request,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
+    user: User = Depends(current_user),
 ):
     """Store the browser's push subscription for the calling user."""
-    if x_user_id is None:
-        raise HTTPException(status_code=401, detail="missing X-User-Id")
     payload = await request.json()
     endpoint = payload.get("endpoint")
     keys = payload.get("keys") or {}
     p256dh, auth = keys.get("p256dh"), keys.get("auth")
     if not (endpoint and p256dh and auth):
         raise HTTPException(status_code=400, detail="invalid subscription")
-    save_subscription(db, x_user_id, endpoint, p256dh, auth)
+    save_subscription(db, user.id, endpoint, p256dh, auth)
     return {"ok": True}

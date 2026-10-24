@@ -165,6 +165,7 @@ Each of tasks 1–4 ends with a `make test` checkpoint.
     - _Requirements: AC-3, AC-4, AC-5, AC-8, AC-33, AC-54_
   - [ ] 4.3 Implement `require_role` in `app/deps.py` and the startup route check
     - No session → 401; wrong role → 404 with the shared body; attach to utility/building routers; boot fails if a non-allowlisted route lacks `require_role`
+    - Replace the pre-auth `X-User-Id` / `X-Role` header stand-in in `routes/chat.py`, `routes/sms.py`, and `routes/portfolio.py` with `current_user` / `require_role` resolved from the `cw_session` cookie; the identity headers must no longer be honoured on any route, and the existing role-boundary checks (e.g. `_require_building_access`) take their user from the dependency
     - _Requirements: AC-44, AC-7, AC-33_
   - [ ] 4.4 Implement scoped repositories in `app/scope.py`
     - `UtilityRepo._scoped(Model)` filtering through `zip_utility` or `events.utility_id`; `BuildingRepo` raising 404 on id mismatch before any query, plus `territory_median_calls()`

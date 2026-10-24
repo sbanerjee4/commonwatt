@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from db.models import Base, Message, PushSubscription, Thread
 from notify.push import notify_user
+from app.auth import hash_password
 from tests.conftest import (
     make_building,
     make_call_history,
@@ -24,7 +25,8 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
-def ctx():
+def ctx(monkeypatch):
+    monkeypatch.setenv("COMMONWATT_INSECURE_COOKIES", "1")
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -32,8 +34,10 @@ def ctx():
     db = Session(engine, expire_on_commit=False)
     util = make_utility(db)
     bld = make_building(db, id="129860")
-    mgr = make_user(db, email="m@x.test", role="building_manager", building_id=bld.id)
-    op = make_user(db, email="op@x.test", role="utility", utility_id=util.id)
+    mgr = make_user(db, email="m@x.test", role="building_manager", building_id=bld.id,
+                    password_hash=hash_password("pw-mgr"))
+    op = make_user(db, email="op@x.test", role="utility", utility_id=util.id,
+                   password_hash=hash_password("pw-op"))
     ev = make_event(db, building_ids=[bld.id])
     make_call_history(db, event=ev, building_id=bld.id)
 
@@ -53,41 +57,46 @@ def ctx():
     db.close()
 
 
-def _mgr(ids):
-    return {"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"}
+def login_mgr(c):
+    assert c.post("/auth/login",
+                  json={"email": "m@x.test", "password": "pw-mgr"}).status_code == 200
 
 
-def _op(ids):
-    return {"X-User-Id": str(ids["op"]), "X-Role": "utility"}
+def login_op(c):
+    assert c.post("/auth/login",
+                  json={"email": "op@x.test", "password": "pw-op"}).status_code == 200
 
 
 def test_unread_count_since(ctx):
     c, db, ids = ctx
-    c.post(f"/inbox/{ids['bld']}/reply", json={"body": "hello"}, headers=_mgr(ids))
+    login_mgr(c)
+    c.post(f"/inbox/{ids['bld']}/reply", json={"body": "hello"})
     n = db.query(Message).count()
-    assert c.get(f"/inbox/{ids['bld']}/unread?since=0", headers=_mgr(ids)).json()["unread"] == n
-    assert c.get(f"/inbox/{ids['bld']}/unread?since={n}", headers=_mgr(ids)).json()["unread"] == 0
+    assert c.get(f"/inbox/{ids['bld']}/unread?since=0").json()["unread"] == n
+    assert c.get(f"/inbox/{ids['bld']}/unread?since={n}").json()["unread"] == 0
 
 
 def test_close_blocks_replies(ctx):
     c, db, ids = ctx
-    r = c.post(f"/inbox/{ids['bld']}/close", headers=_op(ids))
+    login_op(c)
+    r = c.post(f"/inbox/{ids['bld']}/close")
     assert r.status_code == 200 and r.json()["closed"] is True
     assert db.query(Thread).one().closed_at is not None
-    assert c.post(f"/inbox/{ids['bld']}/reply", json={"body": "YES"},
-                  headers=_mgr(ids)).status_code == 409
+    login_mgr(c)
+    assert c.post(f"/inbox/{ids['bld']}/reply", json={"body": "YES"}).status_code == 409
 
 
 def test_close_requires_utility(ctx):
     c, db, ids = ctx
-    assert c.post(f"/inbox/{ids['bld']}/close", headers=_mgr(ids)).status_code == 403
+    login_mgr(c)
+    assert c.post(f"/inbox/{ids['bld']}/close").status_code == 403
 
 
 def test_push_subscribe_stores(ctx):
     c, db, ids = ctx
     sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "k", "auth": "a"}}
-    assert c.post("/push/subscribe", json=sub,
-                  headers={"X-User-Id": str(ids["mgr"])}).status_code == 200
+    login_mgr(c)
+    assert c.post("/push/subscribe", json=sub).status_code == 200
     assert db.query(PushSubscription).filter_by(user_id=ids["mgr"]).count() == 1
 
 
