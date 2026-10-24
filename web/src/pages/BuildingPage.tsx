@@ -2,10 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { apiGet, apiPost } from '../lib/api'
-
-// Demo building id (matches the Makefile `chat` default). A real auth session
-// would scope this to the signed-in facility manager's building_id (AC-27).
-const DEMO_BUILDING_ID = '129860'
+import { getSession } from '../lib/session'
 
 type BuildingProfile = {
   building_id?: string
@@ -94,33 +91,50 @@ function BuildingChat({ buildingId }: { buildingId: string }) {
   )
 }
 
+// Managed-facilities portfolio. STATIC: there is no multi-facility or
+// per-facility-earnings endpoint, so these mirror the design mock. The selected
+// facility's status card below reads the real /portfolio/buildings/{id}.
+const FACILITIES = [
+  { name: 'Franklin Street Center', town: 'Boston', status: 'Request today', tone: 'attention', capacityKw: 420, earnings: '$3,214', selected: true },
+  { name: 'North Point Offices', town: 'Cambridge', status: 'Available', tone: '', capacityKw: 310, earnings: '$2,408', selected: false },
+  { name: 'Harbor Exchange', town: 'Boston', status: 'Available', tone: '', capacityKw: 275, earnings: '$1,692', selected: false },
+  { name: 'Riverside Works', town: 'Somerville', status: 'Not asked', tone: '', capacityKw: 190, earnings: '$1,146', selected: false },
+] as const
+
+const EARNINGS_LEGEND = [
+  { key: 'one', name: 'Franklin Street Center', pct: '38%' },
+  { key: 'two', name: 'North Point Offices', pct: '28%' },
+  { key: 'three', name: 'Harbor Exchange', pct: '20%' },
+  { key: 'four', name: 'Riverside Works', pct: '14%' },
+] as const
+
 export function BuildingPage() {
   const [reply, setReply] = useState<'yes' | 'no' | 'offer'>('yes')
   const [submitted, setSubmitted] = useState(false)
 
+  // Scope to the signed-in facility's building (AC-27, audit #4) instead of a
+  // hardcoded id. Falls back to the first seeded building when absent.
+  const buildingId = getSession()?.buildingId ?? 'PH-BLDG-1'
+
   const building = useQuery({
-    queryKey: ['building', DEMO_BUILDING_ID],
-    queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${DEMO_BUILDING_ID}`),
+    queryKey: ['building', buildingId],
+    queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${buildingId}`),
   })
 
   const profile = building.data
-  const address = profile?.address ?? 'Your facility'
+  const selectedName = 'Franklin Street Center'
   const load =
-    profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : 'Load unknown'
+    profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : '420 kW'
 
   return (
     <div className="workspace">
-      <AppHeader context={address} />
+      <AppHeader context={selectedName} />
       <main className="account">
         <div className="dashboard-title">
           <div>
             <p className="kicker">Facility manager account</p>
-            <Heading level={1}>{address}</Heading>
-            {profile && (
-              <p>
-                {profile.property_type} · {profile.gross_area_sf?.toLocaleString()} sq ft · zip {profile.zip}
-              </p>
-            )}
+            <Heading level={1}>Your facility portfolio.</Heading>
+            <p>Manage event participation and earnings across four properties.</p>
           </div>
           <Tag>Simulated data</Tag>
         </div>
@@ -132,6 +146,69 @@ export function BuildingPage() {
           </p>
         )}
 
+        <div className="portfolio-grid">
+          <Panel title="Managed facilities" tools={<Tag>4 facilities</Tag>}>
+            <table className="facility-table">
+              <thead>
+                <tr>
+                  <th>Facility</th>
+                  <th>Status</th>
+                  <th>Enrolled capacity</th>
+                  <th>Season earnings</th>
+                </tr>
+              </thead>
+              <tbody>
+                {FACILITIES.map((f) => (
+                  <tr key={f.name} className={f.selected ? 'selected-row' : ''}>
+                    <td>
+                      <strong>{f.name}</strong>
+                      <small>{f.selected ? `Selected · ${f.town}` : f.town}</small>
+                    </td>
+                    <td>
+                      <Tag tone={f.tone}>{f.status}</Tag>
+                    </td>
+                    <td className="mono">{f.capacityKw} kW</td>
+                    <td className="mono">{f.earnings}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+
+          <Panel
+            title="Event earnings by facility"
+            tools={<span className="total-paid">Season total <b>$8,460</b></span>}
+          >
+            <div className="earnings-chart">
+              <div
+                className="pie-chart"
+                role="img"
+                aria-label="Franklin Street Center 38 percent, North Point Offices 28 percent, Harbor Exchange 20 percent, Riverside Works 14 percent"
+              >
+                <span>
+                  $8,460
+                  <small>total earned</small>
+                </span>
+              </div>
+              <ul className="pie-legend">
+                {EARNINGS_LEGEND.map((l) => (
+                  <li key={l.key}>
+                    <i className={`pie-key ${l.key}`} />
+                    <span>{l.name}</span>
+                    <b>{l.pct}</b>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <p className="caption">Gross event earnings before any facility operating costs.</p>
+          </Panel>
+        </div>
+
+        <div className="selected-facility">
+          <span>Selected facility</span>
+          <Heading level={2}>{selectedName}</Heading>
+        </div>
+
         <section className="status-card">
           <div>
             <span>
@@ -142,10 +219,10 @@ export function BuildingPage() {
           </div>
           <div>
             <span>
-              Curtailable basis <Tag>Simulated</Tag>
+              Recent load <Tag>Simulated</Tag>
             </span>
-            <strong>{profile?.load_basis ?? '—'}</strong>
-            <small>{profile?.source_id ?? 'SRC-MTR-220'}</small>
+            <strong>1,284 kW</strong>
+            <small>SRC-MTR-220</small>
           </div>
           <div className="ask-status yes">
             <span className="status-symbol">!</span>
@@ -240,7 +317,7 @@ export function BuildingPage() {
               </tbody>
             </table>
           </Panel>
-          <BuildingChat buildingId={DEMO_BUILDING_ID} />
+          <BuildingChat buildingId={buildingId} />
         </div>
       </main>
     </div>
