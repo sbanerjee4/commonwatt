@@ -41,6 +41,7 @@ from server.constants import (
 from server.data import (
     Building,
     EJ_ZIPS,
+    INCOME_SOURCE_ID,
     buildings_by_id,
     buildings_by_zip,
     load_buildings,
@@ -111,14 +112,20 @@ def rank_candidates(
             continue
         candidates.append(b)
 
-    # Sort by curtailable load descending
-    candidates.sort(key=lambda b: b.curtailable_load_kw or 0, reverse=True)
+    # Rank by socioeconomic priority first (ask those who can most afford a
+    # reduction first), then by curtailable load. This leans on
+    # wealthy/commercial load and spares low-income and EJ areas.
+    candidates.sort(
+        key=lambda b: (b.socioeconomic_priority, b.curtailable_load_kw or 0),
+        reverse=True,
+    )
 
     return {
         "target_mw": target_mw,
         "ej_cap_pct": ej_cap_pct,
         "heat_threshold_exceeded": heat_threshold_exceeded,
         "excluded_count": len(exclude),
+        "ranking_basis": "socioeconomic_priority_then_load",
         "candidates": [
             {
                 "building_id": b.building_id,
@@ -129,6 +136,11 @@ def rank_candidates(
                 "load_basis": b.load_basis,
                 "is_ej": b.is_ej,
                 "is_protected": b.is_protected,
+                "median_income": b.median_income,
+                "affluence_tier": b.affluence_tier,
+                "is_commercial": b.is_commercial,
+                "socioeconomic_priority": round(b.socioeconomic_priority, 2),
+                "income_source_id": INCOME_SOURCE_ID if b.median_income else None,
             }
             for b in candidates[:200]  # top 200 candidates returned to agent
         ],
@@ -309,12 +321,21 @@ def plan_event(
             continue
         eligible.append(b)
 
-    # Sort by curtailable load desc
+    # Sort by curtailable load desc (used by the naive v1 pass)
     eligible.sort(key=lambda b: b.curtailable_load_kw or 0, reverse=True)
 
     target_kw = target_mw * 1000
-    non_ej = [b for b in eligible if not b.is_ej]
-    ej = [b for b in eligible if b.is_ej]
+    # Socioeconomic ordering for the equity-corrected pass: ask the buildings
+    # that can most afford a reduction first (high socioeconomic_priority), and
+    # within the same priority prefer higher load so we hit the target fast.
+    # This leans on wealthy/commercial load and spares low-income residents.
+    socio_sorted = sorted(
+        eligible,
+        key=lambda b: (b.socioeconomic_priority, b.curtailable_load_kw or 0),
+        reverse=True,
+    )
+    non_ej = [b for b in socio_sorted if not b.is_ej]
+    ej = [b for b in socio_sorted if b.is_ej]
 
     selected: list[Building] = []
     total_kw = 0.0
@@ -615,6 +636,127 @@ def building_info(building_id: str) -> dict[str, Any]:
     if b is None:
         return {"error": f"building_id {building_id!r} not found"}
     return b.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# score_socioeconomic
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def score_socioeconomic(building_ids: list[str]) -> dict[str, Any]:
+    """
+    Summarize the socioeconomic makeup of a proposed portfolio.
+
+    Equity goal: a fair plan leans on buildings that can most afford a
+    reduction (high-income areas, large commercial/institutional buildings) and
+    spares those a reduction would hurt most (low-income residents, EJ zips).
+
+    Returns per-tier load shares and a fairness read the agent can explain to
+    the operator. Every income value traces to the ACS source id.
+    """
+    bid_map = buildings_by_id()
+    tiers = {"low": 0.0, "middle": 0.0, "high": 0.0, "unknown": 0.0}
+    commercial_kw = 0.0
+    residential_low_kw = 0.0
+    total_kw = 0.0
+    detail = []
+
+    for bid in building_ids:
+        b = bid_map.get(bid)
+        if b is None or b.curtailable_load_kw is None:
+            continue
+        kw = b.curtailable_load_kw
+        total_kw += kw
+        tiers[b.affluence_tier] = tiers.get(b.affluence_tier, 0.0) + kw
+        if b.is_commercial:
+            commercial_kw += kw
+        if b.affluence_tier == "low" and not b.is_commercial:
+            residential_low_kw += kw
+        detail.append({
+            "building_id": b.building_id,
+            "address": b.address,
+            "zip": b.zip,
+            "median_income": b.median_income,
+            "affluence_tier": b.affluence_tier,
+            "is_commercial": b.is_commercial,
+            "curtailable_load_kw": kw,
+            "socioeconomic_priority": round(b.socioeconomic_priority, 2),
+        })
+
+    def pct(x: float) -> float:
+        return round(x / total_kw * 100, 1) if total_kw > 0 else 0.0
+
+    low_resid_share = pct(residential_low_kw)
+    return {
+        "building_count": len(building_ids),
+        "total_load_kw": round(total_kw, 1),
+        "load_share_pct_by_tier": {t: pct(v) for t, v in tiers.items()},
+        "commercial_load_share_pct": pct(commercial_kw),
+        "low_income_residential_share_pct": low_resid_share,
+        # A small share from low-income residents is the fairness goal.
+        "fairness_read": (
+            "fair" if low_resid_share <= 15 else
+            "review" if low_resid_share <= 30 else
+            "unfair_leans_on_low_income"
+        ),
+        "detail": detail,
+        "source_id": INCOME_SOURCE_ID,
+    }
+
+
+# ---------------------------------------------------------------------------
+# local_conditions  (advisory — informs the operator, does not auto-decide)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def local_conditions(zips: list[str], signals: list[dict] | None = None) -> dict[str, Any]:
+    """
+    Record real-time local-hardship signals for candidate zips so the planner
+    can DOWN-RANK affected areas and flag them to the operator with a source.
+
+    This tool is deterministic: it does NOT fetch the web itself. The agent
+    gathers recent news/alerts (heat advisory, outage, flooding, etc.) using
+    its own web tool, then passes them in as `signals`:
+        [{"zip": "02128", "kind": "heat_advisory",
+          "summary": "NWS heat advisory through Fri",
+          "source_url": "https://...", "severity": "high"}]
+
+    Returning them here keeps the human-gate intact: the advisory and its
+    source land in the trace and the operator decides. A high-severity signal
+    adds a protective down-rank the planner should honor, but the operator can
+    override.
+
+    Returns, per zip, whether a protective flag applies and the source(s).
+    """
+    signals = signals or []
+    by_zip: dict[str, list[dict]] = {}
+    for s in signals:
+        z = s.get("zip")
+        if not z:
+            continue
+        by_zip.setdefault(z, []).append({
+            "kind": s.get("kind", "unspecified"),
+            "summary": s.get("summary", ""),
+            "source_url": s.get("source_url"),
+            "severity": s.get("severity", "medium"),
+        })
+
+    result = []
+    for z in zips:
+        flags = by_zip.get(z, [])
+        high = any(f["severity"] == "high" for f in flags)
+        result.append({
+            "zip": z,
+            "has_hardship_signal": bool(flags),
+            "protective_downrank": high,  # honor for high severity
+            "signals": flags,
+        })
+    return {
+        "zips": result,
+        "note": "Advisory only. Signals come from the agent's web search and "
+                "are shown to the operator with their source; the operator "
+                "approves. No signal silently changes who is asked.",
+    }
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from app.deps import current_user, require_role
 from db.models import User
 from server.constants import EJ_SOURCE_ID
+from server.data import INCOME_SOURCE_ID, affluence_tier_for_income, median_income_for_zip
 from server.data import buildings_by_zip, load_buildings
 from server.tools import building_info, estimate_savings, recruitment_list
 
@@ -47,6 +48,9 @@ def get_zips() -> dict[str, Any]:
                 if total_load is not None else None
             ),
             "ejStatus": "ej" if buildings[0].is_ej else "non_ej",
+            "medianIncome": buildings[0].median_income,
+            "affluenceTier": buildings[0].affluence_tier,
+            "incomeSourceId": INCOME_SOURCE_ID if buildings[0].median_income else None,
             "cumulativeCalls": 0,
             "hasGeometry": True,
         })
@@ -73,6 +77,10 @@ def get_zip_buildings(zip_code: str) -> dict[str, Any]:
             "propertyType": b.property_type,
             "grossAreaSf": b.gross_area_sf,
             "curtailableLoadKw": load,
+            "affluenceTier": b.affluence_tier,
+            "medianIncome": b.median_income,
+            "canAbsorb": b.can_absorb,
+            "shouldProtect": b.should_protect,
         })
     return {"zip": zip_code, "buildings": markers}
 
