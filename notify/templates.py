@@ -15,9 +15,8 @@ FORBIDDEN_WORDS = ("cut", "shut off", "curtail", "disconnect")
 
 TEMPLATES: dict[str, str] = {
     "building_ask": (
-        "CommonWatt: event {window}. Your building ({building_name}) is asked "
-        "to reduce {kw_requested} of {kw_enrolled} kW enrolled. {reason}. "
-        "Est. payment ${payment}. Reply YES, NO, or a number of kW."
+        "CommonWatt: event {window}. {building_name}: reduce {kw_requested} of "
+        "{kw_enrolled} kW. {reason}. Est. ${payment}. Reply YES, NO, or kW."
     ),
     "operator_draft_ready": (
         "CommonWatt: draft event ready. {window}, {target_mw} MW, "

@@ -149,9 +149,51 @@ class SimulatedProvider(Provider):
         return SMSResult(success=True, provider_sid=sid, error=None)
 
 
+class InAppProvider(Provider):
+    """In-app chat channel. Posts the message as a system entry in the
+    (event, building) thread instead of sending SMS. Free; no Twilio.
+
+    The send path sets `event_id` and `building_id` before calling send(),
+    since the Provider.send signature carries only phone + body.
+    """
+
+    name = "inapp"
+
+    def __init__(self, db_session):
+        self.db_session = db_session
+        self.event_id: Optional[int] = None
+        self.building_id: Optional[int] = None
+
+    def bind(self, *, event_id: Optional[int], building_id: Optional[int]) -> None:
+        self.event_id = event_id
+        self.building_id = building_id
+
+    async def send(self, phone: str, body: str) -> SMSResult:
+        # Import here to avoid a models import at module load.
+        from db.models import Message
+
+        if self.event_id is None or self.building_id is None:
+            return SMSResult(
+                success=False, provider_sid=None,
+                error="inapp provider not bound to an (event, building) thread",
+            )
+        msg = Message(
+            event_id=self.event_id,
+            building_id=self.building_id,
+            sender_role="system",
+            sender_user_id=None,
+            body=body,
+        )
+        self.db_session.add(msg)
+        self.db_session.flush()
+        return SMSResult(success=True, provider_sid=f"INAPP{msg.id}", error=None)
+
+
 def resolve_provider(db_session=None) -> Provider:
     """Pick a provider from SMS_PROVIDER env (default 'simulated')."""
     choice = os.environ.get("SMS_PROVIDER", "simulated").lower()
     if choice == "twilio":
         return TwilioProvider.from_env()
+    if choice == "inapp":
+        return InAppProvider(db_session=db_session)
     return SimulatedProvider(db_session=db_session)

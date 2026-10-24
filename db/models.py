@@ -126,6 +126,31 @@ class Reply(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class Message(Base):
+    """One message in an (event, building) chat thread.
+
+    The in-app channel: the system posts the ask, the building manager replies,
+    and an operator can post free text to take over. The thread is the
+    conversation; structured YES/NO/kW answers still land in `replies` too, so
+    the backfill logic is unchanged.
+    """
+
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), nullable=False)
+    building_id: Mapped[int] = mapped_column(
+        ForeignKey("buildings.id"), nullable=False
+    )
+    sender_role: Mapped[str] = mapped_column(String)
+    # "system" | "building_manager" | "operator"
+    sender_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    body: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

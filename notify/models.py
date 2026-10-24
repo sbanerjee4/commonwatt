@@ -72,8 +72,11 @@ async def send_sms(
         db_session.commit()
         return {"sent": False, "reason_skipped": reason, "provider_sid": None}
 
-    # Eligibility.
-    if not user.phone:
+    # Eligibility. In-app delivery needs no phone (it posts to a page);
+    # SMS/simulated channels do.
+    from notify.provider import InAppProvider
+    is_inapp = isinstance(provider, InAppProvider)
+    if not is_inapp and not user.phone:
         return skip("no_phone")
     if user.sms_opted_out:
         return skip("opted_out")
@@ -99,6 +102,11 @@ async def send_sms(
     )
     db_session.add(msg)
     db_session.commit()
+
+    # In-app channel posts into the (event, building) thread; give it context.
+    from notify.provider import InAppProvider
+    if isinstance(provider, InAppProvider):
+        provider.bind(event_id=event_id, building_id=user.building_id)
 
     result = await provider.send(user.phone, body)
 
