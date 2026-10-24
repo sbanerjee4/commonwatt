@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from bff.app import app
+from app.main import app
 
 client = TestClient(app)
 
@@ -62,7 +62,7 @@ def test_zip_not_found():
 
 
 def test_building_profile():
-    r = client.get("/buildings/129860")
+    r = client.get("/portfolio/buildings/129860")
     assert r.status_code == 200
     body = r.json()
     assert body["building_id"] == "129860"
@@ -71,7 +71,7 @@ def test_building_profile():
 
 
 def test_building_not_found():
-    r = client.get("/buildings/does-not-exist")
+    r = client.get("/portfolio/buildings/does-not-exist")
     assert r.status_code == 404
 
 
@@ -133,7 +133,7 @@ def test_event_draft_mocked(monkeypatch):
 
     monkeypatch.setattr(planner_mod, "run_planner", lambda **kw: _Result())
 
-    r = client.post("/event/draft", json={"target_mw": 20.0, "ej_cap_pct": 0.35})
+    r = client.post("/event/draft", json={"target_mw": 20.0, "ej_cap_pct": 0.35}, headers={"X-Role": "operator"})
     assert r.status_code == 200
     body = r.json()
     assert body["approved"] is True
@@ -150,7 +150,7 @@ def test_building_chat_mocked(monkeypatch):
 
     monkeypatch.setattr(chat_mod, "make_session", lambda bid, event_context=None: _Session())
 
-    r = client.post("/building/129860/chat", json={"message": "what is my building?"})
+    r = client.post("/portfolio/building/129860/chat", json={"message": "what is my building?"})
     assert r.status_code == 200
     body = r.json()
     assert body["buildingId"] == "129860"

@@ -1,4 +1,4 @@
-.PHONY: setup db test mcp chat demo bff check-bedrock serve presubmit evidence
+.PHONY: setup db test mcp chat demo serve check-bedrock sms presubmit evidence
 
 PY ?= python3
 
@@ -11,7 +11,7 @@ db:
 	PYTHONPATH=. $(PY) -m alembic upgrade head
 	PYTHONPATH=. $(PY) -m db.seed
 
-# Run all tests (MCP tool properties, BFF, in-app chat; no LLM calls)
+# Run all tests (MCP tool properties, BFF, SMS/chat; no LLM calls, no real SMS)
 test:
 	PYTHONPATH=. $(PY) -m pytest tests/ -v
 
@@ -19,9 +19,9 @@ test:
 mcp:
 	PYTHONPATH=. $(PY) -m server.tools
 
-# Start the BFF API the front-end talks to (binds to 127.0.0.1)
-bff:
-	PYTHONPATH=. $(PY) -m uvicorn bff.app:app --host 127.0.0.1 --port 8000
+# Start the API the front-end talks to (single FastAPI app, binds to 127.0.0.1)
+serve:
+	PYTHONPATH=. $(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 # Verify the Bedrock key + region + model access are working
 check-bedrock:
@@ -44,9 +44,9 @@ print(f'Final plan v{p.version}: {p.achieved_mw:.1f} MW, {p.building_count} buil
 print(); print('Trace:'); \
 [print(f'  [{s.kind}] {s.summary}') for s in r.trace]"
 
-# Start the in-app chat + browser-push API (chat + push routes) on :8001
-serve:
-	PYTHONPATH=. $(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+# Start the SMS/chat app (Twilio webhook at /sms/inbound, chat + push routes) on :8001
+sms:
+	SMS_PROVIDER=$${SMS_PROVIDER:-simulated} PYTHONPATH=. $(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
 # Deterministic pre-submit checks (read-only)
 presubmit:

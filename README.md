@@ -75,7 +75,7 @@ compliant v2 — the full "v1 rejected -> v2 approved" story, printed as a trace
 Start the BFF API the front-end talks to:
 
 ```
-make bff        # serves on http://127.0.0.1:8000
+make serve      # serves on http://127.0.0.1:8000
 ```
 
 Chat with a building's assistant:
@@ -93,11 +93,11 @@ Read-only unless noted. Every numeric field carries a `source_id`.
 | GET  | `/health` | status + building count |
 | GET  | `/zips` | per-zip aggregates for the choropleth |
 | GET  | `/zips/{zip}/buildings` | building markers for a zip drill-in |
-| GET  | `/buildings/{id}` | one building's full profile |
+| GET  | `/portfolio/buildings/{id}` | one building's full profile |
 | GET  | `/savings?shed_mw=&hours=` | three savings counters (estimated, sourced) |
 | GET  | `/recruitment?top_n=` | high-load unenrolled EJ buildings |
 | POST | `/event/draft` | run the planner/critic loop (needs Bedrock) |
-| POST | `/building/{id}/chat` | one facility-manager chat turn (needs Bedrock) |
+| POST | `/portfolio/building/{id}/chat` | one facility-manager chat turn (needs Bedrock) |
 
 ## Tests
 

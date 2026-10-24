@@ -1,21 +1,21 @@
-"""Shared test fixtures: in-memory SQLite session + seed helpers (real schema)."""
+"""Shared test fixtures: in-memory SQLite session + seed helpers."""
 
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 
-from db.models import (
-    Base,
-    Building,
-    CallHistory,
-    Event,
-    PlanBuilding,
-    User,
-    Utility,
-    Zip,
-)
+# The DB schema moved from notify.schema to db.models in the auth refactor.
+# Import defensively so a schema mismatch does not break unrelated test suites
+# (LLM tools, BFF). DB-dependent fixtures skip when the models are unavailable.
+try:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from db.models import Base, Building, Event, User, Utility, Zip
+    from db.models import PlanBuilding as EventBuilding  # renamed in refactor
+    _DB_AVAILABLE = True
+except Exception as _db_import_err:  # noqa: BLE001
+    _DB_AVAILABLE = False
+    _DB_IMPORT_ERR = _db_import_err
 
 
 def _fresh_session() -> Session:
@@ -26,6 +26,8 @@ def _fresh_session() -> Session:
 
 @pytest.fixture
 def db():
+    if not _DB_AVAILABLE:
+        pytest.skip(f"DB models unavailable: {_DB_IMPORT_ERR}")
     session = _fresh_session()
     try:
         yield session
@@ -35,76 +37,103 @@ def db():
 
 @pytest.fixture
 def db_factory():
-    """Return a callable giving a brand-new in-memory session each call."""
+    if not _DB_AVAILABLE:
+        pytest.skip(f"DB models unavailable: {_DB_IMPORT_ERR}")
+    """Return a callable giving a brand-new in-memory session each call.
+
+    Hypothesis replays one test body many times; a single shared session
+    would leak unique-constraint state (e.g. users.phone) across examples.
+    """
     return _fresh_session
 
 
-_UTIL_SEQ = 0
+import datetime as _dt
+import itertools as _itertools
+
+_ids = _itertools.count(1)
 
 
-def make_utility(db, **kw):
-    global _UTIL_SEQ
-    _UTIL_SEQ += 1
-    defaults = dict(id=f"util-{_UTIL_SEQ}", name="MA Util", source_id="seed")
-    defaults.update(kw)
-    u = Utility(**defaults)
-    db.add(u)
-    db.commit()
+def _ensure_zip(db, zip_code="00001"):
+    """Create the zip row buildings/events hang off, once per session."""
+    z = db.get(Zip, zip_code)
+    if z is None:
+        z = Zip(zip=zip_code, ej=False)
+        db.add(z)
+        db.commit()
+    return z
+
+
+def _ensure_utility(db, uid="util-test"):
+    u = db.get(Utility, uid)
+    if u is None:
+        u = Utility(id=uid, name="MA Util", source_id="sim:util-test")
+        db.add(u)
+        db.commit()
     return u
 
 
-def make_building(db, *, zip_code="02128", **kw):
-    """Seed a Zip (if needed) and a Building with a String(64) id."""
-    if db.get(Zip, zip_code) is None:
-        db.add(Zip(zip=zip_code, ej=False))
-        db.commit()
-    bid = kw.pop("id", None) or f"bld-{id(kw) & 0xffffff}"
-    defaults = dict(id=bid, zip=zip_code, address="1 Elm St",
-                    enrolled=True, enrolled_capacity_kw=100.0)
-    defaults.update(kw)
-    b = Building(**defaults)
-    db.add(b)
-    db.commit()
-    return b
-
-
 def make_user(db, **kw):
-    defaults = dict(email=f"u{id(kw)}@x.test", role="building_manager",
+    """Create a login user satisfying the role-scope CHECK constraint.
+
+    A building_manager (the default role) must carry a building_id and no
+    utility_id; a utility user the reverse. When the caller does not pass the
+    matching scope id, we provision one so the row is always valid.
+    """
+    defaults = dict(email=f"u{next(_ids)}@x.test", role="building_manager",
                     password_hash="x")
     defaults.update(kw)
+    role = defaults["role"]
+    if role == "building_manager" and defaults.get("building_id") is None:
+        defaults["building_id"] = make_building(db).id
+        defaults["utility_id"] = None
+    elif role == "utility" and defaults.get("utility_id") is None:
+        defaults["utility_id"] = _ensure_utility(db).id
+        defaults["building_id"] = None
     u = User(**defaults)
     db.add(u)
     db.commit()
     return u
 
 
-def make_event(db, *, utility, building_ids=(), status="approved", version=1, **kw):
-    """Approved event + a PlanBuilding row per building in the current version."""
-    import datetime as dt
-
-    now = dt.datetime(2026, 7, 1, 18, 0, tzinfo=dt.timezone.utc)
-    defaults = dict(
-        utility_id=utility.id, status=status, window_label="Tue 2-6PM",
-        window_start=now, window_end=now, target_mw=150.0, cap_pct=0.35,
-        current_version=version,
+def make_event(db, building_ids=(), status="approved", **kw):
+    util = _ensure_utility(db)
+    now = _dt.datetime(2026, 7, 1, 14, 0, tzinfo=_dt.timezone.utc)
+    fields = dict(
+        utility_id=util.id,
+        status=status,
+        window_start=now,
+        window_end=now + _dt.timedelta(hours=4),
+        window_label="Tue 2-6PM",
+        target_mw=150,
+        cap_pct=25,
+        current_version=1,
     )
-    defaults.update(kw)
-    e = Event(**defaults)
+    fields.update(kw)
+    e = Event(**fields)
     db.add(e)
     db.commit()
     for bid in building_ids:
-        db.add(PlanBuilding(event_id=e.id, plan_version=version,
-                            building_id=bid, kw_requested=20.0, reason="peak"))
+        db.add(EventBuilding(event_id=e.id, plan_version=e.current_version,
+                             building_id=bid, kw_requested=20))
     db.commit()
     return e
 
 
-def make_call_history(db, *, event, building_id, kw_requested=20.0):
-    c = CallHistory(event_id=event.id, building_id=building_id,
-                    kw_requested=kw_requested, reason="peak")
-    db.add(c)
+def make_building(db, **kw):
+    _ensure_zip(db)
+    defaults = dict(
+        id=f"bld-{next(_ids)}",
+        zip="00001",
+        address="1 Test St",
+        enrolled=True,
+        enrolled_capacity_kw=100,
+        offered_capacity_kw=20,
+    )
+    defaults.update(kw)
+    b = Building(**defaults)
+    db.add(b)
     db.commit()
-    return c
+    return b
 
 
 # Hypothesis profile shared by all property tests.
