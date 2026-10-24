@@ -2,14 +2,6 @@
 
 > Keep the grid up without leaning on the same neighborhoods twice.
 
-## Demo URL
-
-https://commonwatt.vercel.app/
-
-## Video
-
-TODO
-
 ## Track
 
 Climate
@@ -19,6 +11,14 @@ Climate
 An equity-constrained demand-response planner for Massachusetts utilities: it
 decides which buildings to ask to reduce load on a peak day, leans on the ones that can most afford it, spares lower-income neighborhoods, keeps the burden
 off the same neighborhoods, and leaves every call to a human.
+
+## Demo URL
+
+https://commonwatt.vercel.app/
+
+## Video
+
+TODO
 
 ## What it does
 
