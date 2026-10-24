@@ -100,13 +100,34 @@ export function BuildingMap() {
       type: 'circle',
       source: 'buildings',
       paint: {
-        'circle-radius': ['interpolate', ['linear'], ['get', 'kw'], 0, 3, 2000, 9],
+        // Big, obvious circles that grow as you zoom in, sized by load.
+        'circle-radius': [
+          'interpolate', ['linear'], ['zoom'],
+          10, ['interpolate', ['linear'], ['get', 'kw'], 0, 6, 2000, 14],
+          14, ['interpolate', ['linear'], ['get', 'kw'], 0, 10, 2000, 26],
+        ],
         'circle-color': ['get', 'color'],
-        'circle-opacity': 0.82,
-        'circle-stroke-width': 0.5,
-        'circle-stroke-color': '#1a1a1a',
+        'circle-opacity': 0.85,
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#ffffff',
       },
     })
+
+    // A subtle outer glow ring so the circles pop against the map.
+    map.addLayer({
+      id: 'building-pins-halo',
+      type: 'circle',
+      source: 'buildings',
+      paint: {
+        'circle-radius': [
+          'interpolate', ['linear'], ['zoom'],
+          10, ['interpolate', ['linear'], ['get', 'kw'], 0, 9, 2000, 18],
+          14, ['interpolate', ['linear'], ['get', 'kw'], 0, 14, 2000, 32],
+        ],
+        'circle-color': ['get', 'color'],
+        'circle-opacity': 0.18,
+      },
+    }, 'building-pins')
 
     const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: true })
     map.on('click', 'building-pins', (e: maplibregl.MapLayerMouseEvent) => {
