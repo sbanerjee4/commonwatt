@@ -13,6 +13,33 @@ decides which buildings to ask to reduce load on a peak day, leans on the ones
 that can most afford it, spares lower-income neighborhoods, and leaves every
 call to a human.
 
+## What it does
+
+On a peak heat day, utilities ask enrolled buildings to reduce electricity load
+for a few hours. Commonwatt puts an equity constraint into that dispatch
+decision: no more than a set share of the load may come from Environmental
+Justice (EJ) zip codes, no building is called two events in a row, and
+protected facilities (schools, nursing homes) are shielded on the hottest days.
+An AI planner proposes a portfolio, a critic checks it against those rules, and
+the operator approves, edits, or rejects. Nothing leaves the system without a
+human.
+
+## VERCEL
+
+https://commonwatt.vercel.app/
+
+Seeded demo accounts (passwords are demo-only). Sign in at `/signin`.
+
+| Role | Email | Password |
+| ---- | ----- | -------- |
+| Utility operator | `utility@demo` | `demo-utility-pass` |
+| Building manager | `building1@demo` | `demo-building-pass` |
+| Building manager | `building2@demo` | `demo-building-pass` |
+| Building manager | `building3@demo` | `demo-building-pass` |
+
+The utility account lands on the operator dashboard (map + planner); a building
+account lands on that building only.
+
 ## Built with Kiro
 
 Commonwatt was built end-to-end with **Kiro**, and it shaped how the whole
@@ -43,17 +70,6 @@ through. We loved building with Kiro.
 | Testing | pytest + Hypothesis (property-based), 58 tests |
 | Built with | **Kiro** — spec-driven dev, MCP, steering, agent hooks, PBT, skills |
 | Deploy | Render (backend), Vercel (front-end) |
-
-## What it does
-
-On a peak heat day, utilities ask enrolled buildings to reduce electricity load
-for a few hours. Commonwatt puts an equity constraint into that dispatch
-decision: no more than a set share of the load may come from Environmental
-Justice (EJ) zip codes, no building is called two events in a row, and
-protected facilities (schools, nursing homes) are shielded on the hottest days.
-An AI planner proposes a portfolio, a critic checks it against those rules, and
-the operator approves, edits, or rejects. Nothing leaves the system without a
-human.
 
 ## Architecture
 
@@ -115,21 +131,6 @@ Chat with a building's assistant:
 ```
 make chat BUILDING=129860
 ```
-
-## Demo logins
-
-Seeded demo accounts (passwords are demo-only; the database stores bcrypt
-hashes, never these strings). Sign in at `/signin`.
-
-| Role | Email | Password |
-| ---- | ----- | -------- |
-| Utility operator | `utility@demo` | `demo-utility-pass` |
-| Building manager | `building1@demo` | `demo-building-pass` |
-| Building manager | `building2@demo` | `demo-building-pass` |
-| Building manager | `building3@demo` | `demo-building-pass` |
-
-The utility account lands on the operator dashboard (map + planner); a building
-account lands on that building only.
 
 ## API endpoints (BFF)
 
