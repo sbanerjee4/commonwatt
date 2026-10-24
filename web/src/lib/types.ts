@@ -78,3 +78,34 @@ export type RecruitmentResponse = {
   top_candidates: RecruitmentCandidate[]
   source_id: string
 }
+
+// POST /event/draft — planner/critic result
+export type TraceStep = {
+  ts: string
+  kind: 'forecast' | 'plan' | 'constraint_check' | 'self_correct'
+  summary: string
+  planVersion?: number | null
+  toolName?: string | null
+  rejectedBy?: string | null
+}
+
+export type EventPlan = {
+  version: number
+  targetMw: number
+  achievedMw: number
+  buildingCount: number
+  ejSharePct: number
+  ejCapPct: number
+  reachable: boolean
+  tradeoff?: string | null
+  portfolio: Array<Record<string, unknown>>
+  source_id: string
+}
+
+export type EventDraftResponse = {
+  approved: boolean
+  iterations: number
+  criticReason?: string | null
+  plan: EventPlan | null
+  trace: TraceStep[]
+}

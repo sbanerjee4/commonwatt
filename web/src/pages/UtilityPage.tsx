@@ -1,17 +1,11 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
-import { apiGet } from '../lib/api'
-import type { ZipsResponse, ZipBuildingsResponse, SavingsResponse, RecruitmentResponse } from '../lib/types'
-
-// --- Agent trace (static sample; POST /event/draft wiring is a follow-up pass) ---
-const trace: Array<[string, string, string, string]> = [
-  ['14:02:11', 'Forecast', 'Peak risk detected for 5–7 PM.', 'grid.forecast'],
-  ['14:02:14', 'Plan v1', 'Proposed 40 MW across 126 buildings.', 'plan.compose'],
-  ['14:02:16', 'Portfolio check', 'Repeated requests detected for two building groups.', 'portfolio.check'],
-  ['14:02:18', 'Self-correct', 'Rebalanced 18 buildings to broaden participation.', 'plan.revise'],
-  ['14:02:21', 'Plan v2', '40 MW target met across 108 available buildings.', 'plan.compose'],
-]
+import { apiGet, apiPost } from '../lib/api'
+import type {
+  ZipsResponse, ZipBuildingsResponse, SavingsResponse, RecruitmentResponse,
+  EventDraftResponse,
+} from '../lib/types'
 
 function MapPanel() {
   const zips = useQuery({ queryKey: ['zips'], queryFn: () => apiGet<ZipsResponse>('/zips') })
@@ -196,6 +190,156 @@ function RecruitmentPanel() {
   )
 }
 
+function OperatorAndAgent() {
+  const [targetMw, setTargetMw] = useState(20)
+  const [approved, setApproved] = useState(false)
+
+  const draft = useMutation({
+    mutationFn: (target: number) =>
+      apiPost<EventDraftResponse>(
+        '/event/draft',
+        { target_mw: target, ej_cap_pct: 0.35, current_temp_f: 88, window_label: '5–7 PM' },
+        { 'X-Role': 'operator' },
+      ),
+    onSuccess: () => setApproved(false),
+  })
+
+  const data = draft.data
+  const plan = data?.plan
+  const fmtTime = (ts: string) => {
+    try {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    } catch {
+      return ts
+    }
+  }
+
+  return (
+    <>
+      <Panel
+        title="Operator approval"
+        className="operator-panel"
+        tools={<Tag tone="attention">Agent recommendation</Tag>}
+      >
+        <p className="agent-origin">
+          The planning agent prepares an event proposal from live building data. Nothing is sent to
+          facilities until an operator approves it.
+        </p>
+
+        <label className="slider-label">
+          <span>
+            Target <b>{targetMw} MW</b>
+          </span>
+          <input
+            type="range"
+            min={5}
+            max={40}
+            value={targetMw}
+            onChange={(e) => setTargetMw(Number(e.target.value))}
+          />
+        </label>
+
+        <div className="action-row">
+          <button
+            className="ui-button primary"
+            onClick={() => draft.mutate(targetMw)}
+            disabled={draft.isPending}
+          >
+            {draft.isPending ? 'Planning…' : 'Draft event'}
+          </button>
+        </div>
+
+        {draft.isError && (
+          <p className="caption">
+            Could not reach the planner. Is `make serve` running, and is the Bedrock key set?
+          </p>
+        )}
+
+        {plan && (
+          <>
+            <div className="event-facts">
+              <div>
+                <span>Target</span>
+                <b>{plan.targetMw} MW</b>
+              </div>
+              <div>
+                <span>Achieved</span>
+                <b>{plan.achievedMw.toFixed(1)} MW</b>
+              </div>
+              <div>
+                <span>Buildings</span>
+                <b>{plan.buildingCount}</b>
+              </div>
+              <div>
+                <span>EJ share</span>
+                <b>
+                  {plan.ejSharePct.toFixed(1)}% / {plan.ejCapPct.toFixed(0)}% cap
+                </b>
+              </div>
+            </div>
+            {!plan.reachable && plan.tradeoff && (
+              <p className="caption">
+                <strong>Unreachable under cap:</strong> {plan.tradeoff}
+              </p>
+            )}
+            <div className="action-row">
+              <button className="ui-button primary" onClick={() => setApproved(true)}>
+                Approve
+              </button>
+              <button className="ui-button secondary">Edit list</button>
+              <button className="ui-button ghost" onClick={() => draft.reset()}>
+                Reject
+              </button>
+            </div>
+            {approved && (
+              <div className="confirmation">
+                ✓ Event approved · {plan.achievedMw.toFixed(1)} MW across {plan.buildingCount} buildings
+                <span>Audit line recorded · {plan.source_id}</span>
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+
+      <Panel title="Planning agent" className="agent-panel" tools={<Tag>{data ? (data.approved ? 'Approved by critic' : 'Needs review') : 'Idle'}</Tag>}>
+        <div className="agent-evidence">
+          <details open>
+            <summary>
+              <span>Agent trace</span>
+              <small>
+                {data ? `${data.trace.length} steps · ${data.iterations} iteration(s)` : 'Draft an event to run the agent'}
+              </small>
+            </summary>
+            {!data && <p className="caption">The live agent trace (forecast → plan v1 → constraint check → self-correct → plan v2) appears here after you draft an event.</p>}
+            {data && (
+              <ol className="trace-list">
+                {data.trace.map((step, index) => {
+                  const isRevision = step.kind === 'self_correct'
+                  return (
+                    <li className={isRevision ? 'revision' : ''} key={`${step.ts}-${index}`}>
+                      <time>{fmtTime(step.ts)}</time>
+                      <div>
+                        <strong>
+                          {step.kind === 'plan' && step.planVersion
+                            ? `Plan v${step.planVersion}`
+                            : step.kind.replace(/_/g, ' ')}
+                        </strong>
+                        {step.rejectedBy && <Tag tone="attention">Rejected: {step.rejectedBy}</Tag>}
+                        <p>{step.summary}</p>
+                      </div>
+                      {step.toolName && <code>{step.toolName}</code>}
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </details>
+        </div>
+      </Panel>
+    </>
+  )
+}
+
 export function UtilityPage() {
   return (
     <div className="workspace">
@@ -210,64 +354,7 @@ export function UtilityPage() {
         </div>
         <div className="dashboard-grid">
           <MapPanel />
-          <Panel title="Operator approval" className="operator-panel" tools={<Tag tone="attention">Agent recommendation</Tag>}>
-            <p className="agent-origin">
-              The planning agent prepared this event proposal. Nothing is sent to facilities until an
-              operator approves it.
-            </p>
-            <div className="event-facts">
-              <div>
-                <span>Event window</span>
-                <b>5–7 PM</b>
-              </div>
-              <div>
-                <span>Target</span>
-                <b>40 MW</b>
-              </div>
-              <div>
-                <span>Buildings</span>
-                <b>108</b>
-              </div>
-              <div>
-                <span>Expected response</span>
-                <b>92%</b>
-              </div>
-            </div>
-            <label className="slider-label">
-              <span>
-                Target <b>40 MW</b>
-              </span>
-              <input type="range" min={20} max={60} defaultValue={40} />
-            </label>
-            <div className="action-row">
-              <button className="ui-button primary">Approve</button>
-              <button className="ui-button secondary">Edit list</button>
-              <button className="ui-button ghost">Reject</button>
-            </div>
-          </Panel>
-          <Panel title="Planning agent" className="agent-panel" tools={<Tag>Ready for review</Tag>}>
-            <div className="agent-evidence">
-              <details open>
-                <summary>
-                  <span>Agent trace</span>
-                  <small>5 steps · all versions retained</small>
-                </summary>
-                <ol className="trace-list">
-                  {trace.map(([time, title, copy, tool], index) => (
-                    <li className={index === 2 ? 'revision' : ''} key={time}>
-                      <time>{time}</time>
-                      <div>
-                        <strong>{title}</strong>
-                        {index === 2 && <Tag tone="attention">Revision trigger</Tag>}
-                        <p>{copy}</p>
-                      </div>
-                      <code>{tool}</code>
-                    </li>
-                  ))}
-                </ol>
-              </details>
-            </div>
-          </Panel>
+          <OperatorAndAgent />
           <SeasonPanel />
           <RecruitmentPanel />
         </div>
