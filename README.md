@@ -44,14 +44,6 @@ through. We loved building with Kiro.
 | Built with | **Kiro** — spec-driven dev, MCP, steering, agent hooks, PBT, skills |
 | Deploy | Render (backend), Vercel (front-end) |
 
-## Demo URL
-
-https://commonwatt.vercel.app/
-
-## Video
-
-TODO
-
 ## What it does
 
 On a peak heat day, utilities ask enrolled buildings to reduce electricity load
