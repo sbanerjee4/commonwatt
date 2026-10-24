@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.deps import current_user, require_role
+from app.db import get_db
 from db.models import User
 from server.constants import EJ_SOURCE_ID
 from server.data import INCOME_SOURCE_ID, affluence_tier_for_income, median_income_for_zip
@@ -188,6 +189,123 @@ def post_event_draft(
             for s in result.trace
         ],
     }
+
+
+class ApproveRequest(BaseModel):
+    target_mw: float = 10.0
+    ej_cap_pct: float = 0.35
+    current_temp_f: float = 88.0
+    window_label: str = "today 3:30–6:30 PM"
+
+
+@router.post("/event/approve")
+def post_event_approve(
+    req: ApproveRequest,
+    db=Depends(get_db),
+    user: User = Depends(require_role("utility")),
+) -> dict[str, Any]:
+    """Approve an event: persist the plan, open a thread per building, and post a
+    plain system notice to each so its manager is contacted automatically.
+
+    The plan is re-run server-side from the same inputs (never trusted from the
+    client). Each building gets an ``auto``-mode thread, so a manager reply is
+    answered by the agent until they request a human. Operator-only (human gate).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from agent.planner import run_planner
+    from app.routes._chat_helpers import get_or_create_thread, post_message
+    from db.models import AuditLog, CallHistory, Event, PlanBuilding
+    from notify.push import notify_user
+
+    result = run_planner(
+        target_mw=req.target_mw,
+        ej_cap_pct=req.ej_cap_pct,
+        current_temp_f=req.current_temp_f,
+        window_label=req.window_label,
+    )
+    plan = result.final_plan
+    if plan is None or not result.approved:
+        raise HTTPException(
+            status_code=409,
+            detail="plan not approvable by the critic; adjust target or cap",
+        )
+
+    now = datetime.now(timezone.utc)
+    # Resolve the operator's utility; fall back to the first utility row.
+    from sqlalchemy import select
+    from db.models import Utility
+
+    utility_id = user.utility_id or db.execute(
+        select(Utility.id)
+    ).scalars().first()
+    if utility_id is None:
+        raise HTTPException(status_code=409, detail="no utility configured")
+
+    event = Event(
+        utility_id=utility_id,
+        window_start=now,
+        window_end=now + timedelta(hours=2),
+        window_label=req.window_label,
+        target_mw=plan.target_mw,
+        cap_pct=req.ej_cap_pct,
+        status="approved",
+        current_version=plan.version,
+        approved_by=user.id,
+        approved_at=now,
+    )
+    db.add(event)
+    db.flush()  # assign event.id
+
+    contacted: list[str] = []
+    for row in plan.portfolio:
+        bid = row.get("building_id")
+        if not bid:
+            continue
+        kw = float(row.get("curtailable_load_kw") or 0.0)
+        db.add(PlanBuilding(
+            event_id=event.id,
+            plan_version=plan.version,
+            building_id=bid,
+            kw_requested=kw,
+            reason="Selected by the planner within the equity cap.",
+        ))
+        db.add(CallHistory(
+            event_id=event.id, building_id=bid, kw_requested=kw,
+            reason="Approved event contact.",
+        ))
+        get_or_create_thread(db, event.id, bid)
+        post_message(
+            db, event_id=event.id, building_id=bid, sender_role="system",
+            body=(
+                f"You've been asked to voluntarily reduce about {kw:,.0f} kW "
+                f"during {req.window_label}. Reply here with yes, no, or an "
+                f"amount you can offer. Participation is voluntary and paid."
+            ),
+        )
+        contacted.append(bid)
+
+    db.add(AuditLog(
+        user_id=user.id, event_id=event.id, building_id=None,
+        action="approved",
+        detail=f"{len(contacted)} buildings contacted", provider="inapp",
+    ))
+    db.commit()
+
+    # Notify each building's manager (best-effort; push is skipped w/o VAPID).
+    from db.models import User as UserModel
+    for bid in contacted:
+        mgr = db.execute(
+            select(UserModel).where(
+                UserModel.building_id == bid, UserModel.role == "building_manager"
+            )
+        ).scalars().first()
+        if mgr is not None:
+            notify_user(db, mgr.id, "CommonWatt",
+                        "You've been asked to participate in an event.")
+
+    return {"ok": True, "event_id": event.id, "contacted": contacted,
+            "building_count": len(contacted)}
 
 
 _chat_sessions: dict[str, Any] = {}

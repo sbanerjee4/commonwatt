@@ -3,12 +3,11 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { BuildingMap } from '../components/BuildingMap'
 import { ChatThread } from '../components/ChatThread'
-import { apiGet, apiPost, ApiError } from '../lib/api'
+import { apiGet, apiPost } from '../lib/api'
 import { getUnread } from '../lib/chat'
 import type {
 SavingsResponse, RecruitmentResponse,
   EventDraftResponse,
-  EventPlan,
   ZipsResponse,
   ZipBuildingsResponse,
 } from '../lib/types'
@@ -111,78 +110,8 @@ function RecruitmentPanel() {
 
 // Pull a sensible default building id out of the drafted plan's portfolio,
 // so the operator composer is pre-filled with a building that is in the event.
-function firstBuildingId(plan: EventPlan): string {
-  for (const row of plan.portfolio) {
-    const id = (row as Record<string, unknown>).building_id ?? (row as Record<string, unknown>).buildingId
-    if (typeof id === 'string' && id) return id
-  }
-  return ''
-}
-
-// Operator -> building message composer. Posts to the real backend endpoint
-// (POST /inbox/{buildingId}/operator-message); the building's EventInbox polls
-// and shows it within seconds. Forbidden-wording rejections (422) are surfaced.
-function OperatorMessageBox({ defaultBuildingId }: { defaultBuildingId: string }) {
-  const [buildingId, setBuildingId] = useState(defaultBuildingId)
-  const [body, setBody] = useState('')
-  const [sentTo, setSentTo] = useState<string | null>(null)
-
-  const send = useMutation({
-    mutationFn: (payload: { buildingId: string; body: string }) =>
-      apiPost<{ ok: boolean }>(
-        `/inbox/${payload.buildingId}/operator-message`,
-        { body: payload.body },
-        { 'X-Role': 'operator' },
-      ),
-    onSuccess: (_d, vars) => {
-      setSentTo(vars.buildingId)
-      setBody('')
-    },
-  })
-
-  const onSend = () => {
-    const id = buildingId.trim()
-    const text = body.trim()
-    if (!id || !text || send.isPending) return
-    send.mutate({ buildingId: id, body: text })
-  }
-
-  return (
-    <div className="operator-message-box">
-      <label className="slider-label"><span>Message a building</span></label>
-      <input
-        type="text"
-        value={buildingId}
-        placeholder="Building id (e.g. PH-BLDG-1)"
-        onChange={(e) => setBuildingId(e.target.value)}
-      />
-      <div className="chat-composer">
-        <input
-          type="text"
-          value={body}
-          placeholder="Message to the building manager…"
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onSend() }}
-        />
-        <button className="ui-button primary" onClick={onSend} disabled={send.isPending}>
-          Send
-        </button>
-      </div>
-      {send.isError && (
-        <p className="caption">
-          {send.error instanceof ApiError && send.error.status === 422
-            ? 'Message rejected: it contains a forbidden word (e.g. “cut”, “shut off”).'
-            : 'Could not send. Confirm the building id has an active event.'}
-        </p>
-      )}
-      {sentTo && !send.isError && <p className="caption">✓ Sent to {sentTo}.</p>}
-    </div>
-  )
-}
-
 function OperatorAndAgent() {
   const [targetMw, setTargetMw] = useState(20)
-  const [approved, setApproved] = useState(false)
 
   const draft = useMutation({
     mutationFn: (target: number) =>
@@ -191,7 +120,16 @@ function OperatorAndAgent() {
         { target_mw: target, ej_cap_pct: 0.35, current_temp_f: 88, window_label: '5–7 PM' },
         { 'X-Role': 'operator' },
       ),
-    onSuccess: () => setApproved(false),
+    onSuccess: () => approve.reset(),
+  })
+
+  const approve = useMutation({
+    mutationFn: (target: number) =>
+      apiPost<{ ok: boolean; event_id: number; contacted: string[]; building_count: number }>(
+        '/event/approve',
+        { target_mw: target, ej_cap_pct: 0.35, current_temp_f: 88, window_label: '5–7 PM' },
+        { 'X-Role': 'operator' },
+      ),
   })
 
   const data = draft.data
@@ -273,20 +211,26 @@ function OperatorAndAgent() {
               </p>
             )}
             <div className="action-row">
-              <button className="ui-button primary" onClick={() => setApproved(true)}>
-                Approve
+              <button
+                className="ui-button primary"
+                onClick={() => approve.mutate(targetMw)}
+                disabled={approve.isPending || !plan.reachable}
+              >
+                {approve.isPending ? 'Approving…' : 'Approve'}
               </button>
-              <button className="ui-button ghost" onClick={() => draft.reset()}>
+              <button className="ui-button ghost" onClick={() => { draft.reset(); approve.reset() }}>
                 Reject
               </button>
             </div>
-            {approved && (
+            {approve.isError && (
+              <p className="caption">Could not approve the event. Please try again.</p>
+            )}
+            {approve.data && (
               <div className="confirmation">
-                ✓ Event approved · {plan.achievedMw.toFixed(1)} MW across {plan.buildingCount} buildings
-                <span>Audit line recorded · {plan.source_id}</span>
+                ✓ Event approved · {plan.achievedMw.toFixed(1)} MW across {approve.data.building_count} buildings
+                <span>{approve.data.building_count} building managers contacted automatically · {plan.source_id}</span>
               </div>
             )}
-            {approved && <OperatorMessageBox defaultBuildingId={firstBuildingId(plan)} />}
           </>
         )}
       </Panel>
