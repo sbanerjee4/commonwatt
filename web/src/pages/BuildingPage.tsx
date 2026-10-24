@@ -329,13 +329,13 @@ export function BuildingPage() {
             <span className="status-symbol">!</span>
             <span>
               <b>Asked to reduce today</b>
-              <small>5–7 PM · Reply requested</small>
+              <small>5–7 PM · Reply by 3:30 PM</small>
             </span>
           </div>
         </section>
 
         <div className="account-grid">
-          <Panel title="Current event request" tools={<Tag tone="attention">Reply by 3:30 PM</Tag>}>
+          <Panel title="Current event request">
             <div className="request-explainer">
               The utility is asking whether your building can voluntarily use less electricity from
               5–7 PM. You choose whether to participate.
