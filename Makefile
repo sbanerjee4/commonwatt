@@ -1,4 +1,4 @@
-.PHONY: setup db test mcp chat demo bff check-bedrock sms presubmit evidence
+.PHONY: setup db test mcp chat demo serve check-bedrock sms presubmit evidence
 
 PY ?= python3
 
@@ -19,9 +19,9 @@ test:
 mcp:
 	PYTHONPATH=. $(PY) -m server.tools
 
-# Start the BFF API the front-end talks to (binds to 127.0.0.1)
-bff:
-	PYTHONPATH=. $(PY) -m uvicorn bff.app:app --host 127.0.0.1 --port 8000
+# Start the API the front-end talks to (single FastAPI app, binds to 127.0.0.1)
+serve:
+	PYTHONPATH=. $(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 # Verify the Bedrock key + region + model access are working
 check-bedrock:
