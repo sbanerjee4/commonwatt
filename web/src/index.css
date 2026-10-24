@@ -445,3 +445,52 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
   .trace-list code { grid-column: 2; }
   .table-panel, .account .panel { overflow-x: auto; }
 }
+
+/* --- In-app chat: textarea composer, banners, sidebar, operator conversations --- */
+.chat-composer textarea {
+  min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink);
+  font: var(--text-sm) var(--font-body); resize: vertical;
+}
+.chat-panel { display: flex; flex-direction: column; min-height: 0; }
+.chat-panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-line); font-size: var(--text-sm); }
+.chat-banner { margin: 0; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--color-line); background: var(--color-warning-soft); color: var(--color-warning); font-size: .72rem; font-weight: var(--weight-bold); }
+.chat-actions { display: flex; gap: var(--space-2); padding: 0 var(--space-4) var(--space-4); }
+.chat-thread { flex: 1; min-height: 8rem; overflow-y: auto; align-content: start; }
+
+/* Facility-side chat toggle + badge */
+.chat-toggle-wrap { display: flex; align-items: center; gap: var(--space-3); }
+.chat-toggle { position: relative; display: inline-flex; align-items: center; gap: var(--space-2); }
+.chat-sidebar-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem;
+  padding: 0 var(--space-1); border-radius: var(--radius-pill); background: var(--color-primary);
+  color: var(--color-canvas); font-size: .62rem; font-weight: var(--weight-bold);
+}
+
+/* Right-side chat sidebar on the facility page */
+.chat-sidebar {
+  position: fixed; top: 0; right: 0; z-index: 60; display: flex; flex-direction: column;
+  width: 360px; max-width: 100vw; height: 100vh; background: var(--color-surface);
+  border-left: 1px solid var(--color-line); box-shadow: -1rem 0 3rem color-mix(in srgb, var(--color-ink) 12%, transparent);
+  transition: transform 0.2s ease;
+}
+.chat-sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--color-line); }
+.chat-sidebar .chat-panel { flex: 1; min-height: 0; }
+
+/* Operator-side facility conversations panel */
+.conversations-panel { grid-column: 1 / -1; }
+.conversations-controls { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-4); border-bottom: 1px solid var(--color-line); }
+.conversations-zip { display: grid; gap: var(--space-1); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+.conversations-zip select { min-height: 2.5rem; padding: 0 var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); }
+.conversations-body { display: grid; grid-template-columns: minmax(12rem, 0.4fr) minmax(0, 1fr); min-height: 24rem; }
+.conversations-list { margin: 0; padding: var(--space-2); list-style: none; border-right: 1px solid var(--color-line); overflow-y: auto; }
+.conversations-list .caption { padding: var(--space-3); }
+.conversation-item { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; padding: var(--space-3); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-ink); font: 600 var(--text-sm) var(--font-body); text-align: left; cursor: pointer; }
+.conversation-item.selected { border-color: var(--color-primary); background: var(--color-accent-soft); }
+.conversations-thread { display: flex; flex-direction: column; min-height: 0; }
+.conversations-thread .caption { padding: var(--space-5); }
+.unread-dot { flex: none; width: .55rem; height: .55rem; border-radius: 50%; background: var(--color-primary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-sidebar { transition: none; }
+}

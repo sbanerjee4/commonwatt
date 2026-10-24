@@ -5,23 +5,28 @@
 // API client (lib/api.ts) reads this to attach X-User-Id / X-Role headers that
 // the backend's header-based access checks expect.
 //
-// Two role vocabularies exist in the backend: the users table uses
-// "utility" / "building_manager", while the route guards check
-// "operator" / "building_manager" (and /event/draft wants "operator"). We store
-// both: `role` for display/routing, `apiRole` for the header the endpoints read.
+// Two role vocabularies exist in the backend. The users table and the
+// /inbox/* guards use "utility" / "building_manager", so that is what the
+// X-Role header (apiRole) carries. A few planning endpoints (e.g.
+// /event/draft) still check the legacy "operator" role, so the operator
+// session keeps an optional `plannerRole: 'operator'` for callers that need
+// to send X-Role operator explicitly. We store `role` for display/routing and
+// `apiRole` for the header the inbox endpoints read.
 
 const STORAGE_KEY = 'commonwatt.session'
 
 export type UiRole = 'utility' | 'facility'
-export type ApiRole = 'operator' | 'building_manager'
+export type ApiRole = 'utility' | 'building_manager'
 
 export type Session = {
   /** Seeded users.id, sent as X-User-Id. */
   userId: number | null
   /** Role used for routing/display. */
   role: UiRole
-  /** Role string the backend endpoints check, sent as X-Role. */
+  /** Role string the inbox endpoints check, sent as X-Role. */
   apiRole: ApiRole
+  /** Legacy role for planning endpoints (/event/draft) that want X-Role operator. */
+  plannerRole?: 'operator'
   /** Building the session is scoped to (users.building_id), or null for operators. */
   buildingId: string | null
   email: string
@@ -33,7 +38,8 @@ export const DEMO_ACCOUNTS: Record<UiRole, Session> = {
   utility: {
     userId: 1,
     role: 'utility',
-    apiRole: 'operator',
+    apiRole: 'utility',
+    plannerRole: 'operator',
     buildingId: null,
     email: 'utility@demo',
   },

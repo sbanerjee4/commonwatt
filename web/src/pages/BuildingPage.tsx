@@ -1,7 +1,9 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
+import { ChatThread } from '../components/ChatThread'
 import { apiGet } from '../lib/api'
+import { getUnread, type ChatThread as ChatThreadData } from '../lib/chat'
 import { getSession } from '../lib/session'
 
 type BuildingProfile = {
@@ -46,6 +48,42 @@ export function BuildingPage() {
     queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${buildingId}`),
   })
 
+  // Chat sidebar: poll unread since the highest message id the facility has
+  // seen. `chatOpen` tracks the manual toggle. Unread>0 auto-opens the
+  // sidebar and shows a badge; opening the sidebar advances the seen marker
+  // to the newest message in the thread so the badge clears.
+  const queryClient = useQueryClient()
+  const [chatOpen, setChatOpen] = useState(false)
+  const [lastSeenId, setLastSeenId] = useState(0)
+  const chatOpenRef = useRef(chatOpen)
+  chatOpenRef.current = chatOpen
+
+  const unread = useQuery({
+    queryKey: ['unread', buildingId, lastSeenId],
+    queryFn: () => getUnread(buildingId, lastSeenId),
+    refetchInterval: 4000,
+    // A thread may not exist yet (409); treat that as "no unread" rather than
+    // retrying into an error state.
+    retry: false,
+  })
+
+  const unreadCount = unread.data?.unread ?? 0
+
+  useEffect(() => {
+    if (unreadCount > 0 && !chatOpenRef.current) {
+      setChatOpen(true)
+    }
+  }, [unreadCount])
+
+  // While the sidebar is open, advance the seen marker to the highest message
+  // id currently in the cached thread so unread resets to zero.
+  useEffect(() => {
+    if (!chatOpen) return
+    const cached = queryClient.getQueryData<ChatThreadData>(['thread', buildingId])
+    const maxId = cached?.messages.reduce((hi, m) => (m.id > hi ? m.id : hi), 0) ?? 0
+    if (maxId > lastSeenId) setLastSeenId(maxId)
+  }, [chatOpen, unreadCount, buildingId, lastSeenId, queryClient])
+
   const profile = building.data
   const selectedName = 'Franklin Street Center'
   const load =
@@ -61,7 +99,18 @@ export function BuildingPage() {
             <Heading level={1}>Your facility portfolio.</Heading>
             <p>Manage event participation and earnings across four properties.</p>
           </div>
-          <Tag>Simulated data</Tag>
+          <div className="chat-toggle-wrap">
+            <button
+              type="button"
+              className="ui-button secondary chat-toggle"
+              onClick={() => setChatOpen((open) => !open)}
+              aria-expanded={chatOpen}
+            >
+              {chatOpen ? 'Close messages' : 'Messages'}
+              {unreadCount > 0 && <span className="chat-sidebar-badge">{unreadCount}</span>}
+            </button>
+            <Tag>Simulated data</Tag>
+          </div>
         </div>
 
         {building.isError && (
@@ -244,6 +293,17 @@ export function BuildingPage() {
           </Panel>
         </div>
       </main>
+      {chatOpen && (
+        <aside className="chat-sidebar" aria-label="Facility messages">
+          <div className="chat-sidebar-head">
+            <strong>Messages</strong>
+            <button type="button" className="text-link" onClick={() => setChatOpen(false)}>
+              Close
+            </button>
+          </div>
+          <ChatThread buildingId={buildingId} mode="facility" title="Utility conversation" />
+        </aside>
+      )}
     </div>
   )
 }

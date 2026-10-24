@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
+import { ChatThread } from '../components/ChatThread'
 import { apiGet } from '../lib/api'
-import type { ZipsResponse, ZipBuildingsResponse, SavingsResponse, RecruitmentResponse } from '../lib/types'
+import { getUnread } from '../lib/chat'
+import type { ZipsResponse, ZipBuildingsResponse, SavingsResponse, RecruitmentResponse, BuildingMarker } from '../lib/types'
 
 // --- Agent trace (static sample; POST /event/draft wiring is a follow-up pass) ---
 const trace: Array<[string, string, string, string]> = [
@@ -196,6 +198,89 @@ function RecruitmentPanel() {
   )
 }
 
+// Small unread dot next to each facility in the conversations list. A thread
+// only exists in an open approved event, so the 409/no-thread case is treated
+// as "no unread" (retry disabled) rather than an error.
+function UnreadDot({ buildingId }: { buildingId: string }) {
+  const unread = useQuery({
+    queryKey: ['unread', buildingId, 0],
+    queryFn: () => getUnread(buildingId, 0),
+    refetchInterval: 4000,
+    retry: false,
+  })
+  if ((unread.data?.unread ?? 0) <= 0) return null
+  return <span className="unread-dot" aria-label={`${unread.data?.unread} unread`} />
+}
+
+function ConversationsPanel() {
+  const zips = useQuery({ queryKey: ['zips'], queryFn: () => apiGet<ZipsResponse>('/zips') })
+  const [selectedZip, setSelectedZip] = useState<string | null>(null)
+  const [selectedBuilding, setSelectedBuilding] = useState<string | null>(null)
+
+  const buildings = useQuery({
+    queryKey: ['zip-buildings', selectedZip],
+    queryFn: () => apiGet<ZipBuildingsResponse>(`/zips/${selectedZip}/buildings`),
+    enabled: selectedZip !== null,
+  })
+
+  const facilities: BuildingMarker[] = buildings.data?.buildings ?? []
+
+  return (
+    <Panel title="Facility conversations" className="conversations-panel" tools={<Tag>Live inbox</Tag>}>
+      <div className="conversations-controls">
+        <label className="conversations-zip">
+          Zip
+          <select
+            value={selectedZip ?? ''}
+            onChange={(e) => {
+              setSelectedZip(e.target.value || null)
+              setSelectedBuilding(null)
+            }}
+          >
+            <option value="">Select a zip…</option>
+            {zips.data?.zips.map((z) => (
+              <option key={z.zip} value={z.zip}>
+                {z.zip} · {z.buildingCount} bldgs
+              </option>
+            ))}
+          </select>
+        </label>
+        {zips.isError && <p className="caption">Could not load zips from the API.</p>}
+      </div>
+
+      <div className="conversations-body">
+        <ul className="conversations-list">
+          {selectedZip === null && <li className="caption">Pick a zip to list facilities.</li>}
+          {selectedZip !== null && buildings.isLoading && <li className="caption">Loading facilities…</li>}
+          {selectedZip !== null && !buildings.isLoading && facilities.length === 0 && (
+            <li className="caption">No facilities in this zip.</li>
+          )}
+          {facilities.map((b) => (
+            <li key={b.buildingId}>
+              <button
+                type="button"
+                className={selectedBuilding === b.buildingId ? 'conversation-item selected' : 'conversation-item'}
+                onClick={() => setSelectedBuilding(b.buildingId)}
+              >
+                <span>{b.address}</span>
+                <UnreadDot buildingId={b.buildingId} />
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        <div className="conversations-thread">
+          {selectedBuilding ? (
+            <ChatThread buildingId={selectedBuilding} mode="operator" title={selectedBuilding} />
+          ) : (
+            <p className="caption">Select a facility to view its conversation.</p>
+          )}
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 export function UtilityPage() {
   return (
     <div className="workspace">
@@ -270,6 +355,7 @@ export function UtilityPage() {
           </Panel>
           <SeasonPanel />
           <RecruitmentPanel />
+          <ConversationsPanel />
         </div>
       </main>
     </div>
