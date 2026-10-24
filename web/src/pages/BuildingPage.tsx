@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
-import { apiGet } from '../lib/api'
+import { apiGet, apiPost } from '../lib/api'
 
 // Demo building id (matches the Makefile `chat` default). A real auth session
 // would scope this to the signed-in facility manager's building_id (AC-27).
@@ -17,6 +17,81 @@ type BuildingProfile = {
   load_basis?: string
   source_id?: string
   [key: string]: unknown
+}
+
+type ChatTurn = { role: 'you' | 'assistant'; text: string }
+
+function BuildingChat({ buildingId }: { buildingId: string }) {
+  const [turns, setTurns] = useState<ChatTurn[]>([])
+  const [input, setInput] = useState('')
+
+  const ask = useMutation({
+    mutationFn: (message: string) =>
+      apiPost<{ buildingId: string; reply: string }>(
+        `/portfolio/building/${buildingId}/chat`,
+        { message },
+        { 'X-Role': 'building_manager' },
+      ),
+    onSuccess: (data) => {
+      setTurns((t) => [...t, { role: 'assistant', text: data.reply }])
+    },
+  })
+
+  const send = () => {
+    const msg = input.trim()
+    if (!msg || ask.isPending) return
+    setTurns((t) => [...t, { role: 'you', text: msg }])
+    setInput('')
+    ask.mutate(msg)
+  }
+
+  const suggestions = [
+    'What is my building and how much could we reduce?',
+    'Why was I asked today?',
+    'How is my payment estimated?',
+  ]
+
+  return (
+    <Panel title="Ask the Commonwatt assistant" tools={<Tag>AI · reads your building data</Tag>}>
+      <p className="request-explainer">
+        Ask about your building, your energy use, or today’s request. The assistant reads your
+        building’s real data and never invents numbers.
+      </p>
+
+      <div className="chat-thread" aria-live="polite">
+        {turns.length === 0 && (
+          <div className="chat-suggestions">
+            {suggestions.map((s) => (
+              <button type="button" key={s} className="ui-button ghost" onClick={() => { setInput(s) }}>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+        {turns.map((t, i) => (
+          <div key={i} className={`chat-message ${t.role === 'you' ? 'user' : 'assistant'}`}>
+            <span>{t.role === 'you' ? 'You' : 'Assistant'}</span>
+            <p>{t.text}</p>
+          </div>
+        ))}
+        {ask.isPending && <div className="chat-message assistant"><span>Assistant</span><p>Thinking…</p></div>}
+        {ask.isError && <p className="caption">Could not reach the assistant. Is `make serve` running with a Bedrock key?</p>}
+      </div>
+
+      <div className="chat-composer">
+        <input
+          type="text"
+          value={input}
+          placeholder="Type a question…"
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') send() }}
+        />
+        <button className="ui-button primary" onClick={send} disabled={ask.isPending}>
+          Send
+        </button>
+      </div>
+    </Panel>
+  )
 }
 
 export function BuildingPage() {
@@ -165,6 +240,7 @@ export function BuildingPage() {
               </tbody>
             </table>
           </Panel>
+          <BuildingChat buildingId={DEMO_BUILDING_ID} />
         </div>
       </main>
     </div>
