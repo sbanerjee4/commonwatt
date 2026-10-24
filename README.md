@@ -119,7 +119,7 @@ in `server/constants.py`.
 
 ## Demo URL
 
-
+https://commonwatt.vercel.app/
 
 ## Video
 
