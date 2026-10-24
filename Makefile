@@ -1,4 +1,4 @@
-.PHONY: setup db test mcp chat demo bff check-bedrock presubmit evidence
+.PHONY: setup db test mcp chat demo bff check-bedrock sms presubmit evidence
 
 PY ?= python3
 
@@ -11,7 +11,7 @@ db:
 	PYTHONPATH=. $(PY) -m alembic upgrade head
 	PYTHONPATH=. $(PY) -m db.seed
 
-# Run all tests (property-based tool tests + BFF endpoint tests; no LLM calls)
+# Run all tests (MCP tool properties, BFF, SMS/chat; no LLM calls, no real SMS)
 test:
 	PYTHONPATH=. $(PY) -m pytest tests/ -v
 
@@ -43,6 +43,10 @@ p = r.final_plan; \
 print(f'Final plan v{p.version}: {p.achieved_mw:.1f} MW, {p.building_count} buildings, EJ share {p.ej_share_pct:.1f}%') if p else print('No plan'); \
 print(); print('Trace:'); \
 [print(f'  [{s.kind}] {s.summary}') for s in r.trace]"
+
+# Start the SMS/chat app (Twilio webhook at /sms/inbound, chat + push routes) on :8001
+sms:
+	SMS_PROVIDER=$${SMS_PROVIDER:-simulated} PYTHONPATH=. $(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
 # Deterministic pre-submit checks (read-only)
 presubmit:

@@ -32,7 +32,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["server*", "agent*", "bff*", "app*", "db*", "sim*"]
+include = ["server*", "agent*", "bff*", "app*", "db*", "sim*", "notify*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
