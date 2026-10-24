@@ -51,7 +51,7 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
   const sendErrorMessage = (err: unknown): string => {
     if (err instanceof ApiError) {
       if (err.status === 422) return 'Message rejected: contains a forbidden word'
-      if (err.status === 409) return 'No active event for this building yet.'
+      if (err.status === 409) return 'No active conversation for this building yet.'
       return err.message
     }
     return 'Could not send message.'
@@ -119,7 +119,7 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
       {close.isError && (
         <p className="caption">
           {close.error instanceof ApiError && close.error.status === 409
-            ? 'No active event for this building yet.'
+            ? 'No active conversation for this building yet.'
             : 'Could not close the thread.'}
         </p>
       )}
