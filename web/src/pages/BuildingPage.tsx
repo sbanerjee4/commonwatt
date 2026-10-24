@@ -18,6 +18,107 @@ type BuildingProfile = {
 
 type ChatTurn = { role: 'you' | 'assistant'; text: string }
 
+type InboxMessage = {
+  id: number
+  event_id: number | null
+  sender_role: 'operator' | 'agent' | 'building_manager' | 'system'
+  sender_user_id: number | null
+  body: string
+  created_at: string | null
+}
+
+type InboxResponse = {
+  building_id: string
+  event_id: number | null
+  handoff_mode: 'auto' | 'human'
+  needs_human: boolean
+  messages: InboxMessage[]
+}
+
+const SENDER_LABEL: Record<InboxMessage['sender_role'], string> = {
+  operator: 'Operator',
+  agent: 'Assistant',
+  building_manager: 'You',
+  system: 'System',
+}
+
+// Live event inbox: polls GET /inbox/{buildingId} every few seconds so an
+// operator message sent from another machine appears here within seconds
+// without a page reload (the backend is built for this — see app/routes/chat.py).
+// The manager replies via POST /inbox/{buildingId}/reply.
+function EventInbox({ buildingId }: { buildingId: string }) {
+  const [input, setInput] = useState('')
+
+  const inbox = useQuery({
+    queryKey: ['inbox', buildingId],
+    queryFn: () => apiGet<InboxResponse>(`/inbox/${buildingId}`),
+    refetchInterval: 4000, // poll every 4s for new operator/agent messages
+    refetchIntervalInBackground: true,
+  })
+
+  const reply = useMutation({
+    mutationFn: (body: string) =>
+      apiPost<{ ok: boolean }>(`/inbox/${buildingId}/reply`, { body }),
+    onSuccess: () => {
+      setInput('')
+      inbox.refetch()
+    },
+  })
+
+  const send = () => {
+    const body = input.trim()
+    if (!body || reply.isPending) return
+    reply.mutate(body)
+  }
+
+  const messages = inbox.data?.messages ?? []
+  const noEvent = inbox.data && inbox.data.event_id === null
+
+  return (
+    <Panel
+      title="Event messages"
+      tools={<Tag tone={messages.length ? 'attention' : ''}>{messages.length ? 'Live' : 'No event'}</Tag>}
+    >
+      <p className="request-explainer">
+        Messages from your utility operator about today’s event appear here live. Replies are
+        recorded against the event.
+      </p>
+
+      <div className="chat-thread" aria-live="polite">
+        {inbox.isError && (
+          <p className="caption">Could not load messages. Make sure you are signed in.</p>
+        )}
+        {!inbox.isError && noEvent && (
+          <p className="caption">No active event for your building right now.</p>
+        )}
+        {messages.map((m) => (
+          <div
+            key={m.id}
+            className={`chat-message ${m.sender_role === 'building_manager' ? 'user' : 'assistant'}`}
+          >
+            <span>{SENDER_LABEL[m.sender_role]}</span>
+            <p>{m.body}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="chat-composer">
+        <input
+          type="text"
+          value={input}
+          placeholder={noEvent ? 'No active event' : 'Reply to the operator…'}
+          disabled={!!noEvent}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') send() }}
+        />
+        <button className="ui-button primary" onClick={send} disabled={reply.isPending || !!noEvent}>
+          Send
+        </button>
+      </div>
+    </Panel>
+  )
+}
+
 function BuildingChat({ buildingId }: { buildingId: string }) {
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [input, setInput] = useState('')
@@ -317,6 +418,7 @@ export function BuildingPage() {
               </tbody>
             </table>
           </Panel>
+          <EventInbox buildingId={buildingId} />
           <BuildingChat buildingId={buildingId} />
         </div>
       </main>
