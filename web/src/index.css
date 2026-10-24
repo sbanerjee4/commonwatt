@@ -446,110 +446,79 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
   .table-panel, .account .panel { overflow-x: auto; }
 }
 
-/* --- Proposal summary + reasoning graph (operator page) --- */
-.proposal-summary {
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.6rem 0.75rem;
-  border-left: 3px solid var(--color-primary);
-  background: var(--color-accent-soft);
-  color: var(--color-ink);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  line-height: var(--leading-body);
-}
+.chat-suggestions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.chat-suggestions .ui-button { font-size: var(--text-sm); }
 
-.reasoning-toggle {
-  font-size: var(--text-sm);
-}
-
-.reasoning-collapsed-hint {
-  margin: 0;
-}
-
-.reasoning-graph-wrap {
-  margin-bottom: 1rem;
-}
-
-.panel-subhead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-  color: var(--color-ink);
-}
-.panel-subhead small {
-  color: var(--color-muted);
-  font-size: var(--text-xs);
-}
-
-.reasoning-graph svg {
-  width: 100%;
-  height: auto;
-  background: var(--color-canvas);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
-}
-
-.reasoning-graph .edge line {
-  stroke: var(--color-line);
-  stroke-width: 0.5;
-  color: var(--color-line); /* arrowhead uses currentColor */
-}
-.reasoning-graph .edge-active line {
-  stroke: var(--color-primary);
-  color: var(--color-primary);
-  stroke-width: 0.9;
-}
-.reasoning-graph .edge-label {
-  fill: var(--color-primary);
-  font-size: 2.1px;
-  font-family: var(--font-body);
-  text-anchor: middle;
-}
-
-.reasoning-graph .gnode {
-  cursor: pointer;
-  outline: none;
-}
-.reasoning-graph .gnode circle {
-  stroke: var(--color-surface);
-  stroke-width: 0.6;
-  transition: r 0.1s ease;
-}
-.reasoning-graph .gnode-label {
-  fill: var(--color-ink);
-  font-size: 2.3px;
-  font-family: var(--font-body);
-}
-.reasoning-graph .kind-signal circle { fill: var(--color-accent); }
-.reasoning-graph .kind-check circle { fill: var(--color-warning); }
-.reasoning-graph .kind-decision circle { fill: var(--color-primary); }
-.reasoning-graph .kind-proposal circle { fill: var(--color-pink); }
-.reasoning-graph .gnode-active circle { stroke: var(--color-ink); stroke-width: 1; }
-.reasoning-graph .gnode-dim { opacity: 0.35; }
-
-.graph-hint {
-  margin: 0.5rem 0 0.25rem;
-  font-size: var(--text-xs);
-  color: var(--color-muted);
-}
-.graph-legend {
+/* Portfolio building map */
+.building-map { display: grid; gap: var(--space-3); padding: var(--space-4); }
+/* Controls row: label+select on the left, count on the right, with a gap
+   between them (not pushed to opposite edges). */
+.map-controls { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.map-controls label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-muted); }
+.map-controls select { padding: var(--space-1) var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); }
+.map-meta { font-size: var(--text-sm); color: var(--color-muted); margin-left: auto; }
+.map-canvas { height: 420px; width: 100%; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-line); }
+/* Override the global absolute-positioned .legend: the map legend sits in
+   normal flow BELOW the map so it never overlaps the panel underneath. */
+.building-map .map-legend {
+  position: static;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: var(--text-xs);
-  color: var(--color-muted);
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  box-shadow: none;
 }
-.graph-legend li { display: flex; align-items: center; gap: 0.3rem; }
-.graph-legend i { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
-.graph-legend i.kind-signal { background: var(--color-accent); }
-.graph-legend i.kind-check { background: var(--color-warning); }
-.graph-legend i.kind-decision { background: var(--color-primary); }
-.graph-legend i.kind-proposal { background: var(--color-pink); }
+.building-map .map-legend strong { flex-basis: 100%; }
+.building-map .map-legend span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.map-legend i { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; border: none; vertical-align: middle; margin-right: var(--space-1); }
 
-@media (prefers-reduced-motion: reduce) {
-  .reasoning-graph .gnode circle { transition: none; }
+/* Building dots rendered as HTML markers (always render, unlike canvas layers) */
+.bldg-dot {
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.3);
+  opacity: 0.9;
+  cursor: pointer;
+  transition: transform 0.1s ease;
 }
+.bldg-dot:hover { transform: scale(1.3); opacity: 1; z-index: 10; }
+
+/* Building popup (compact) */
+.bldg-popup { font-family: var(--font-body); font-size: 0.72rem; line-height: 1.3; display: grid; gap: 1px; min-width: 130px; max-width: 200px; }
+.bldg-popup strong { font-size: 0.78rem; }
+.bldg-popup-ej { margin-top: 2px; color: #0f766e; font-style: italic; font-weight: 600; }
+.maplibregl-popup-content { border-radius: 7px; padding: 7px 9px; }
+.maplibregl-popup-close-button { font-size: 0.9rem; padding: 0 4px; }
+
+/* Sign-in error message + guarded-route loading state (cookie auth). */
+.auth-error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  margin: 0;
+}
+.route-loading {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  color: var(--text-muted, #667085);
+  font-size: 0.95rem;
+}
+
+/* Operator -> building message composer (operator panel). */
+.operator-message-box { margin-top: var(--space-3); display: grid; gap: var(--space-2); }
+.operator-message-box > input { padding: var(--space-1) var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); }
+.conversations-panel { grid-column: 1 / -1; }
+.conversations-body { display: grid; grid-template-columns: minmax(16rem, 22rem) 1fr; min-height: 22rem; }
+.conversations-list { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-4); border-right: 1px solid var(--color-line); }
+.conversations-list select { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); }
+.conversation-item { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-ink); font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.conversation-item.active { border-color: var(--color-primary); background: var(--color-accent-soft); }
+.unread-dot { flex: 0 0 auto; width: var(--space-3); height: var(--space-3); border-radius: 50%; background: var(--color-primary); }
+.conversations-detail { display: grid; align-content: start; padding: var(--space-4); }
+.conversations-thread { display: grid; gap: var(--space-3); }
+.chat-banner { padding: var(--space-2) var(--space-4); }
+.chat-composer textarea { min-width: 0; min-height: 3rem; padding: var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); resize: vertical; }

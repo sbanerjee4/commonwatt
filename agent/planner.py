@@ -29,6 +29,7 @@ from server.tools import (
     plan_event,
     rank_candidates,
     score_equity,
+    score_socioeconomic,
 )
 from agent.prompts import CRITIC_SYSTEM, PLANNER_SYSTEM
 
@@ -87,8 +88,24 @@ PLANNER_TOOLS = [
         },
     },
     {
+        "name": "score_socioeconomic",
+        "description": (
+            "Summarize the socioeconomic makeup of a portfolio: load share by "
+            "affluence tier, commercial share, and low-income residential share "
+            "with a fairness_read. Use this to confirm the plan leans on those "
+            "who can afford a reduction and spares low-income residents."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "building_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["building_ids"],
+        },
+    },
+    {
         "name": "rank_candidates",
-        "description": "Rank eligible buildings by curtailable load.",
+        "description": "Rank eligible buildings by socioeconomic priority then load.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -106,6 +123,7 @@ TOOL_FN_MAP: dict[str, Any] = {
     "plan_event": plan_event,
     "check_constraints": check_constraints,
     "score_equity": score_equity,
+    "score_socioeconomic": score_socioeconomic,
     "rank_candidates": rank_candidates,
 }
 

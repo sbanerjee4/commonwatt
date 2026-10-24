@@ -1,0 +1,54 @@
+# Render blueprint for the Commonwatt backend (the FastAPI app in app/main.py).
+#
+# This provisions a Python web service + a managed Postgres database. Connect it
+# in the Render dashboard via "New > Blueprint" pointed at this repo, or let
+# Render auto-detect render.yaml.
+#
+# The frontend is deployed separately on Vercel. After this backend is live:
+#   1. Copy the service URL (e.g. https://commonwatt-api.onrender.com).
+#   2. In Vercel, set VITE_API_BASE_URL to that URL and redeploy.
+#   3. Set COMMONWATT_CORS_ORIGINS below to your Vercel domain(s).
+#
+# LLM endpoints (/event/draft, chat) are intentionally NOT configured here —
+# they need Bedrock creds. The read/data endpoints (/zips, /savings,
+# /recruitment, /portfolio/buildings/{id}) work without them.
+
+databases:
+  - name: commonwatt-db
+    plan: free
+    databaseName: commonwatt
+    user: commonwatt
+
+services:
+  - type: web
+    name: commonwatt-api
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -e .
+    # Render provides $PORT; bind 0.0.0.0 so the service is reachable.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # NOTE: preDeployCommand is not supported on Render's free tier, so after the
+    # first deploy run migrations + seed ONCE by hand from the service's Shell tab:
+    #   python -m alembic upgrade head && python -m db.seed
+    # (Upgrade this service to the Starter plan to restore an automatic
+    # preDeployCommand: python -m alembic upgrade head && python -m db.seed)
+    healthCheckPath: /health
+    envVars:
+      # app/db.py reads COMMONWATT_DB_URL; db/config.py + alembic read
+      # DATABASE_URL. Both point at the same managed Postgres so the running
+      # app, the migrations, and the seed all use one database.
+      - key: COMMONWATT_DB_URL
+        fromDatabase:
+          name: commonwatt-db
+          property: connectionString
+      - key: DATABASE_URL
+        fromDatabase:
+          name: commonwatt-db
+          property: connectionString
+      # Comma-separated allowlist read by app/main.py. Replace with your real
+      # Vercel domain(s) once known.
+      - key: COMMONWATT_CORS_ORIGINS
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12"

@@ -25,6 +25,56 @@ FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "berdo.json"
 # Max plausible Site EUI (kBtu/ft2). Above this is a BERDO data error.
 MAX_PLAUSIBLE_EUI = 1000.0
 
+INCOME_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "income.json"
+INCOME_SOURCE_ID = "census_acs5_b19013"
+
+GEOCODE_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "geocoded.json"
+GEOCODE_SOURCE_ID = "census_geocoder"
+
+
+@lru_cache(maxsize=1)
+def _lnglat_by_building_id() -> dict:
+    """[lng, lat] per building id, from the committed Census geocode fixture."""
+    try:
+        with open(GEOCODE_FIXTURE_PATH) as f:
+            return json.load(f).get("lng_lat_by_building_id", {})
+    except FileNotFoundError:
+        return {}
+
+# Affluence tiers by median household income (USD). These thresholds split the
+# region into who-can-absorb-a-reduction (high) vs who-we-protect (low). The
+# planner prefers asking "high" first and spares "low".
+# Rough MA context: statewide median ~ $94k; EJ Boston zips run $43k-$65k.
+AFFLUENCE_HIGH_MIN = 120_000.0   # >= this -> high (can sacrifice more)
+AFFLUENCE_LOW_MAX = 70_000.0     # <= this -> low (protect)
+
+
+@lru_cache(maxsize=1)
+def _income_by_zip() -> dict:
+    """Median household income by zip, from the committed ACS fixture."""
+    try:
+        with open(INCOME_FIXTURE_PATH) as f:
+            return json.load(f).get("median_household_income_by_zip", {})
+    except FileNotFoundError:
+        return {}
+
+
+def median_income_for_zip(zip_code: str | None) -> int | None:
+    if not zip_code:
+        return None
+    val = _income_by_zip().get(zip_code)
+    return int(val) if val else None
+
+
+def affluence_tier_for_income(income: int | None) -> Literal["low", "middle", "high", "unknown"]:
+    if income is None:
+        return "unknown"
+    if income <= AFFLUENCE_LOW_MAX:
+        return "low"
+    if income >= AFFLUENCE_HIGH_MIN:
+        return "high"
+    return "middle"
+
 # Zips classified as Environmental Justice (EJ) in Massachusetts.
 # Source: MassGIS EJ block groups crosswalked to zip codes.
 # This is the subset of Boston BERDO zips that overlap EJ block groups.
@@ -66,14 +116,74 @@ class Building:
     is_ej: bool = field(init=False)
     curtailable_load_kw: float | None = field(init=False)
     load_basis: Literal["metered", "estimated_from_type", "unknown"] = field(init=False)
+    median_income: int | None = field(init=False)
+    affluence_tier: Literal["low", "middle", "high", "unknown"] = field(init=False)
+    lng_lat: list | None = field(init=False)
 
     def __post_init__(self) -> None:
         self.is_ej = self.zip in EJ_ZIPS
         self.curtailable_load_kw, self.load_basis = _estimate_load(self)
+        self.median_income = median_income_for_zip(self.zip)
+        self.affluence_tier = affluence_tier_for_income(self.median_income)
+        self.lng_lat = _lnglat_by_building_id().get(self.building_id)
 
     @property
     def is_protected(self) -> bool:
         return self.property_type in PROTECTED_PROPERTY_TYPES
+
+    @property
+    def is_commercial(self) -> bool:
+        """Large commercial / institutional buildings can absorb a reduction
+        more easily than homes. Used alongside affluence to prefer who to ask."""
+        pt = (self.property_type or "").lower()
+        commercial_kw = ("office", "retail", "hotel", "mall", "warehouse",
+                         "lab", "financial", "commercial", "industrial",
+                         "distribution", "supermarket", "store", "showroom")
+        return any(k in pt for k in commercial_kw)
+
+    @property
+    def can_absorb(self) -> bool:
+        """True if this building is a fair ask-first target: higher-income area
+        or a large commercial/institutional building (not a protected facility)."""
+        if self.is_protected:
+            return False
+        return self.affluence_tier == "high" or self.is_commercial
+
+    @property
+    def should_protect(self) -> bool:
+        """True if we should spare this building where possible: low-income
+        area or an EJ zip. These are asked LAST and least."""
+        return self.affluence_tier == "low" or self.is_ej
+
+    @property
+    def socioeconomic_priority(self) -> float:
+        """Ask-first priority from socioeconomic status (higher = ask first).
+
+        Core equity idea: lean on those who can most afford to cut (large
+        commercial + higher-income), spare those a reduction would hurt most
+        (low-income residential, EJ). A big commercial building in a poor area
+        is still a fair ask (it's an institution, not a household), but it is
+        ranked below commercial buildings in wealthier areas.
+
+          +2.0  large commercial / institutional building
+          +1.5  high-income area
+          +0.0  middle-income area
+          -1.5  low-income area (protect)
+          -1.0  EJ zip (protect; stacks with low-income)
+          -10   protected facility (effectively never, handled separately)
+        """
+        if self.is_protected:
+            return -10.0
+        score = 0.0
+        if self.is_commercial:
+            score += 2.0
+        if self.affluence_tier == "high":
+            score += 1.5
+        elif self.affluence_tier == "low":
+            score -= 1.5
+        if self.is_ej:
+            score -= 1.0
+        return score
 
     def to_dict(self) -> dict:
         return {
@@ -95,6 +205,15 @@ class Building:
             "curtailable_load_kw": self.curtailable_load_kw,
             "load_basis": self.load_basis,
             "is_protected": self.is_protected,
+            "median_income": self.median_income,
+            "affluence_tier": self.affluence_tier,
+            "is_commercial": self.is_commercial,
+            "can_absorb": self.can_absorb,
+            "should_protect": self.should_protect,
+            "socioeconomic_priority": round(self.socioeconomic_priority, 2),
+            "income_source_id": INCOME_SOURCE_ID if self.median_income else None,
+            "lng_lat": self.lng_lat,
+            "geocode_source_id": GEOCODE_SOURCE_ID if self.lng_lat else None,
         }
 
 
