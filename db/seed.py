@@ -24,7 +24,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from db.config import SessionLocal
-from db.models import Building, User, Utility, Zip, ZipUtility
+from db.models import (
+    Building,
+    CallHistory,
+    Event,
+    PlanBuilding,
+    User,
+    Utility,
+    Zip,
+    ZipUtility,
+)
 
 # --- PLACEHOLDER constants. Replaced by task 1b. Not real Massachusetts data. ---
 
@@ -234,14 +243,72 @@ def seed_demo_accounts(session: Session) -> None:
     session.commit()
 
 
+def seed_demo_event(session: Session) -> None:
+    """Seed one approved demo event so a live chat thread can exist.
+
+    Idempotent: keyed by the demo window label. Creates an approved Event for
+    the placeholder utility, a PlanBuilding row (current version) for the first
+    demo building, and a CallHistory row so a parsed chat reply has a call_id.
+    """
+    import datetime as dt
+
+    _enable_sqlite_foreign_keys(session)
+    label = "DEMO Tue 2-6PM"
+    event = session.scalar(select(Event).where(Event.window_label == label))
+    if event is None:
+        now = dt.datetime(2026, 7, 1, 18, 0, tzinfo=dt.timezone.utc)
+        event = Event(
+            utility_id=PLACEHOLDER_UTILITY_ID,
+            window_start=now,
+            window_end=now + dt.timedelta(hours=4),
+            window_label=label,
+            target_mw=20.0,
+            cap_pct=0.35,
+            status="approved",
+            current_version=1,
+        )
+        session.add(event)
+        session.flush()
+
+    bld = PLACEHOLDER_BUILDING_IDS[0]
+    pb = session.get(PlanBuilding, (event.id, event.current_version, bld))
+    if pb is None:
+        session.add(
+            PlanBuilding(
+                event_id=event.id,
+                plan_version=event.current_version,
+                building_id=bld,
+                kw_requested=20.0,
+                reason="placeholder peak-load demo",
+            )
+        )
+    call = session.scalar(
+        select(CallHistory).where(
+            CallHistory.event_id == event.id, CallHistory.building_id == bld
+        )
+    )
+    if call is None:
+        session.add(
+            CallHistory(
+                event_id=event.id,
+                building_id=bld,
+                kw_requested=20.0,
+                reason="placeholder peak-load demo",
+            )
+        )
+    session.commit()
+
+
 def main() -> None:
     """Seed the database named by DATABASE_URL (default: local SQLite file)."""
     with SessionLocal() as session:
         seed_placeholder_territory(session)
         seed_demo_accounts(session)
+        seed_demo_event(session)
     print(
-        "Seeded PLACEHOLDER territory (task 1.4) and demo accounts (task 1.5). "
-        "Replace with real data in task 1b."
+        "Seeded PLACEHOLDER territory (task 1.4), demo accounts (task 1.5), and "
+        "a demo approved event with a chat thread target. Replace with real data "
+        "in task 1b."
     )
 
 

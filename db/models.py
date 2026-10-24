@@ -47,26 +47,20 @@ AUDIT_ACTIONS = (
     "protected_cleared",
     "reply_submitted",
     "capacity_updated",
-    # In-app notification channel (SMS -> in-app pivot). send_sms in
-    # notify/models.py and the chat routes write these.
-    "sms_sent",
-    "sms_skipped",
-    "sms_failed",
+    # In-app chat + automated-agent + human-handoff layer.
+    "chat_agent_reply",
+    "chat_handoff_requested",
     "chat_building_reply",
     "chat_operator_message",
     "chat_thread_closed",
-    # Inbound SMS webhook (app/routes/sms.py).
-    "sms_webhook_invalid_signature",
-    "sms_unregistered_sender",
-    "sms_opted_out",
-    "sms_opted_in",
-    "sms_unrecognized_body",
-    "sms_no_active_event",
-    "sms_received",
 )
 
-# Message sender roles for the in-app (event, building) thread.
-MESSAGE_SENDER_ROLES = ("system", "building_manager", "operator")
+# Message sender roles for the in-app (event, building) thread. `agent` is the
+# automated utilities agent that answers in auto mode.
+MESSAGE_SENDER_ROLES = ("system", "agent", "building_manager", "operator")
+
+# Thread handoff modes: `auto` (agent answers) or `human` (operator only).
+THREAD_MODES = ("auto", "human")
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -165,13 +159,6 @@ class User(Base):
         String(64), ForeignKey("buildings.id", ondelete="RESTRICT"), index=True
     )
     password_hash: Mapped[str] = mapped_column(String(255))
-    # Notification channel fields. `phone` is the SMS/simulated destination
-    # (null = no SMS destination; in-app delivery needs none). `sms_opted_out`
-    # suppresses outbound messages regardless of channel.
-    phone: Mapped[str | None] = mapped_column(String(32))
-    sms_opted_out: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="0"
-    )
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -442,30 +429,39 @@ class PushSubscription(Base):
     )
 
 
-class OutboundMessage(Base):
-    """Durable log of one outbound notification attempt, any channel.
+class Thread(Base):
+    """Handoff state for one in-app (event, building) conversation.
 
-    `send_sms` in notify/models.py owns this row: one per attempt, written
-    "pending" before the provider call and updated to "sent"/"failed" after.
-    Channel-agnostic — the SMS, simulated, and in-app providers all record
-    here; the in-app provider ALSO posts a `Message` into the thread.
+    Messages are keyed by (event_id, building_id); this row carries the
+    conversation's mode. `auto` = the automated agent answers the manager;
+    `human` = only a utility operator's free text is posted (the agent is
+    silent). `needs_human` flags a thread for operator attention when an agent
+    reply fell back (Bedrock error or a suppressed banned-word reply) without a
+    mode flip. `closed_at` ends the thread.
     """
 
-    __tablename__ = "outbound_messages"
+    __tablename__ = "threads"
+    __table_args__ = (
+        CheckConstraint(
+            _in_list("handoff_mode", THREAD_MODES), name="handoff_mode_allowed"
+        ),
+        Index("uq_threads_event_id", "event_id", "building_id", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    event_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("events.id", ondelete="CASCADE"), index=True
     )
-    event_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("events.id", ondelete="RESTRICT"), index=True
+    building_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("buildings.id", ondelete="RESTRICT"), index=True
     )
-    template: Mapped[str] = mapped_column(String(64))
-    body: Mapped[str] = mapped_column(Text)
-    provider: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(16), default="pending")
-    provider_sid: Mapped[str | None] = mapped_column(String(128))
-    error: Mapped[str | None] = mapped_column(Text)
+    handoff_mode: Mapped[str] = mapped_column(
+        String(16), default="auto", server_default="auto"
+    )
+    needs_human: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
+    closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -483,13 +479,14 @@ __all__ = [
     "MESSAGE_SENDER_ROLES",
     "Message",
     "MeterRead",
-    "OutboundMessage",
     "PlanBuilding",
     "PushSubscription",
     "REPLY_KINDS",
     "ROLES",
     "Reply",
     "Session",
+    "THREAD_MODES",
+    "Thread",
     "TraceStep",
     "User",
     "Utility",
