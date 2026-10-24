@@ -1,10 +1,15 @@
-.PHONY: setup test mcp chat demo bff check-bedrock
+.PHONY: setup db test mcp chat demo bff check-bedrock presubmit evidence
 
 PY ?= python3
 
 # Install Python dependencies
 setup:
-	pip install -e . 2>/dev/null || pip install fastmcp anthropic hypothesis pytest pytest-asyncio python-dotenv fastapi "uvicorn[standard]" httpx
+	pip install -e .
+
+# Create/upgrade the database schema and seed placeholder territory + demo accounts
+db:
+	PYTHONPATH=. $(PY) -m alembic upgrade head
+	PYTHONPATH=. $(PY) -m db.seed
 
 # Run all tests (property-based tool tests + BFF endpoint tests; no LLM calls)
 test:
@@ -38,3 +43,11 @@ p = r.final_plan; \
 print(f'Final plan v{p.version}: {p.achieved_mw:.1f} MW, {p.building_count} buildings, EJ share {p.ej_share_pct:.1f}%') if p else print('No plan'); \
 print(); print('Trace:'); \
 [print(f'  [{s.kind}] {s.summary}') for s in r.trace]"
+
+# Deterministic pre-submit checks (read-only)
+presubmit:
+	./scripts/presubmit.sh
+
+# Append an evidence snapshot to KIRO.md
+evidence:
+	./scripts/evidence.sh

@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "property-tests-on-save",
+      "trigger": "PostFileSave",
+      "description": "Run property tests for the saved MCP module; on failure, propose a fix and wait for approval.",
+      "matcher": "^mcp/.*\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "The user saved a file under mcp/. Using the module stem (mcp/tools/meter.py gives \"meter\"), run `pytest tests/properties -q -k <stem>`. If all pass, reply with one line and modify nothing. If any fail, report the failing invariant, the Hypothesis counterexample, and the tool function involved. Then read that tool in mcp/, propose a minimal fix that satisfies the invariant without weakening the test, and show the diff. Stop and wait for my approval before applying anything."
+      }
+    }
+  ]
+}

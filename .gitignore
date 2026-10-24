@@ -54,3 +54,6 @@ key*
 *credentials*
 .env.*
 !.env.example
+
+# Local SQLite database (default DATABASE_URL)
+commonwatt.db
