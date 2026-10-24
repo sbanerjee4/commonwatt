@@ -5,11 +5,12 @@ import { BuildingMap } from '../components/BuildingMap'
 import { ChatThread } from '../components/ChatThread'
 import { apiGet, apiPost } from '../lib/api'
 import { getUnread } from '../lib/chat'
+import { regionForZip, siteTypeFor } from '../lib/grouping'
 import type {
 SavingsResponse, RecruitmentResponse,
   EventDraftResponse,
-  ZipsResponse,
-  ZipBuildingsResponse,
+  AllBuildingsResponse,
+  MapBuilding,
 } from '../lib/types'
 
 function MapPanel() {
@@ -289,27 +290,50 @@ function UnreadDot({ buildingId }: { buildingId: string }) {
   return <span className="unread-dot" aria-label={`${unread.data.unread} unread`} />
 }
 
-// Operator "Facility conversations" panel: pick a zip, pick a facility from the
-// left list, and the right pane shows that building's live conversation thread.
-function ConversationsPanel() {
-  const [zip, setZip] = useState('')
-  const [selected, setSelected] = useState('')
+type ConvoGroupBy = 'region' | 'site' | 'zip'
 
-  const zips = useQuery({
-    queryKey: ['zips'],
-    queryFn: () => apiGet<ZipsResponse>('/zips'),
-  })
+// Assign a facility to a group label for the chosen Group-by. All three
+// options read existing building fields only (zip, propertyType) via the
+// shared grouping helpers — no owner or facility-manager data is involved.
+function groupLabelFor(b: MapBuilding, groupBy: ConvoGroupBy): string {
+  if (groupBy === 'region') return regionForZip(b.zip)
+  if (groupBy === 'site') return siteTypeFor(b.propertyType)
+  return b.zip ?? 'Unknown'
+}
+
+// Operator "Facility conversations" panel: browse the whole portfolio grouped
+// by region / site type / zip, filter by a search box, then pick a facility to
+// open its live conversation thread on the right.
+function ConversationsPanel() {
+  const [groupBy, setGroupBy] = useState<ConvoGroupBy>('region')
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState('')
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
   const buildings = useQuery({
-    queryKey: ['zip-buildings', zip],
-    queryFn: () => apiGet<ZipBuildingsResponse>(`/zips/${zip}/buildings`),
-    enabled: zip !== '',
+    queryKey: ['all-buildings-convos'],
+    queryFn: () => apiGet<AllBuildingsResponse>('/portfolio/buildings'),
   })
 
-  const onPickZip = (next: string) => {
-    setZip(next)
-    setSelected('')
+  const term = search.trim().toLowerCase()
+  const facilities = (buildings.data?.buildings ?? []).filter((b) => {
+    if (!term) return true
+    const address = b.address.toLowerCase()
+    const id = b.buildingId.toLowerCase()
+    return address.includes(term) || id.includes(term)
+  })
+
+  // Build groups in stable insertion order so the list ordering is predictable.
+  const groups = new Map<string, MapBuilding[]>()
+  for (const b of facilities) {
+    const label = groupLabelFor(b, groupBy)
+    const bucket = groups.get(label)
+    if (bucket) bucket.push(b)
+    else groups.set(label, [b])
   }
+
+  const toggleGroup = (label: string) =>
+    setCollapsed((prev) => ({ ...prev, [label]: !prev[label] }))
 
   return (
     <Panel
@@ -319,26 +343,57 @@ function ConversationsPanel() {
     >
       <div className="conversations-body">
         <div className="conversations-list">
-          <select value={zip} onChange={(e) => onPickZip(e.target.value)}>
-            <option value="">Select a zip…</option>
-            {zips.data?.zips.map((z) => (
-              <option key={z.zip} value={z.zip}>
-                {z.zip} · {z.buildingCount} buildings
-              </option>
-            ))}
-          </select>
+          <div className="convos-controls">
+            <label>
+              Group by
+              <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as ConvoGroupBy)}>
+                <option value="region">Region</option>
+                <option value="site">Site type</option>
+                <option value="zip">Zip</option>
+              </select>
+            </label>
+            <input
+              type="search"
+              value={search}
+              placeholder="Search by address or building id"
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
 
-          {buildings.isLoading && zip !== '' && <p className="caption">Loading facilities…</p>}
-          {buildings.data?.buildings.map((b) => (
-            <button
-              key={b.buildingId}
-              className={`conversation-item ${selected === b.buildingId ? 'active' : ''}`.trim()}
-              onClick={() => setSelected(b.buildingId)}
-            >
-              <span>{b.address}</span>
-              <UnreadDot buildingId={b.buildingId} />
-            </button>
-          ))}
+          {buildings.isLoading && <p className="caption">Loading facilities…</p>}
+          {buildings.isError && (
+            <p className="caption">Could not load facilities. Make sure you are signed in.</p>
+          )}
+          {!buildings.isLoading && !buildings.isError && groups.size === 0 && (
+            <p className="caption">No facilities match this search.</p>
+          )}
+
+          {[...groups.entries()].map(([label, items]) => {
+            const isCollapsed = collapsed[label] ?? false
+            return (
+              <div className="convo-group" key={label}>
+                <button
+                  className="convo-group-heading"
+                  aria-expanded={!isCollapsed}
+                  onClick={() => toggleGroup(label)}
+                >
+                  <span>{label}</span>
+                  <span className="convo-group-count">{items.length}</span>
+                </button>
+                {!isCollapsed &&
+                  items.map((b) => (
+                    <button
+                      key={b.buildingId}
+                      className={`conversation-item ${selected === b.buildingId ? 'active' : ''}`.trim()}
+                      onClick={() => setSelected(b.buildingId)}
+                    >
+                      <span>{b.address}</span>
+                      <UnreadDot buildingId={b.buildingId} />
+                    </button>
+                  ))}
+              </div>
+            )
+          })}
         </div>
 
         <div className="conversations-detail">
