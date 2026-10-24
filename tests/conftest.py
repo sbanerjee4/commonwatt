@@ -1,4 +1,4 @@
-"""Shared test fixtures: in-memory SQLite session + seed helpers."""
+"""Shared test fixtures: in-memory SQLite session + seed helpers (real schema)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,16 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from notify.schema import Base, Building, Event, EventBuilding, User, Utility
+from db.models import (
+    Base,
+    Building,
+    CallHistory,
+    Event,
+    PlanBuilding,
+    User,
+    Utility,
+    Zip,
+)
 
 
 def _fresh_session() -> Session:
@@ -26,16 +35,42 @@ def db():
 
 @pytest.fixture
 def db_factory():
-    """Return a callable giving a brand-new in-memory session each call.
-
-    Hypothesis replays one test body many times; a single shared session
-    would leak unique-constraint state (e.g. users.phone) across examples.
-    """
+    """Return a callable giving a brand-new in-memory session each call."""
     return _fresh_session
 
 
+_UTIL_SEQ = 0
+
+
+def make_utility(db, **kw):
+    global _UTIL_SEQ
+    _UTIL_SEQ += 1
+    defaults = dict(id=f"util-{_UTIL_SEQ}", name="MA Util", source_id="seed")
+    defaults.update(kw)
+    u = Utility(**defaults)
+    db.add(u)
+    db.commit()
+    return u
+
+
+def make_building(db, *, zip_code="02128", **kw):
+    """Seed a Zip (if needed) and a Building with a String(64) id."""
+    if db.get(Zip, zip_code) is None:
+        db.add(Zip(zip=zip_code, ej=False))
+        db.commit()
+    bid = kw.pop("id", None) or f"bld-{id(kw) & 0xffffff}"
+    defaults = dict(id=bid, zip=zip_code, address="1 Elm St",
+                    enrolled=True, enrolled_capacity_kw=100.0)
+    defaults.update(kw)
+    b = Building(**defaults)
+    db.add(b)
+    db.commit()
+    return b
+
+
 def make_user(db, **kw):
-    defaults = dict(email=f"u{id(kw)}@x.test", role="building_manager")
+    defaults = dict(email=f"u{id(kw)}@x.test", role="building_manager",
+                    password_hash="x")
     defaults.update(kw)
     u = User(**defaults)
     db.add(u)
@@ -43,27 +78,33 @@ def make_user(db, **kw):
     return u
 
 
-def make_event(db, building_ids=(), status="approved", **kw):
-    util = Utility(name="MA Util")
-    db.add(util)
-    db.commit()
-    e = Event(utility_id=util.id, status=status, window_label="Tue 2-6PM",
-              reason_text="peak day", target_mw=150, estimated_payment=200, **kw)
+def make_event(db, *, utility, building_ids=(), status="approved", version=1, **kw):
+    """Approved event + a PlanBuilding row per building in the current version."""
+    import datetime as dt
+
+    now = dt.datetime(2026, 7, 1, 18, 0, tzinfo=dt.timezone.utc)
+    defaults = dict(
+        utility_id=utility.id, status=status, window_label="Tue 2-6PM",
+        window_start=now, window_end=now, target_mw=150.0, cap_pct=0.35,
+        current_version=version,
+    )
+    defaults.update(kw)
+    e = Event(**defaults)
     db.add(e)
     db.commit()
     for bid in building_ids:
-        db.add(EventBuilding(event_id=e.id, building_id=bid))
+        db.add(PlanBuilding(event_id=e.id, plan_version=version,
+                            building_id=bid, kw_requested=20.0, reason="peak"))
     db.commit()
     return e
 
 
-def make_building(db, **kw):
-    defaults = dict(name="Bldg", kw_enrolled=100, kw_requested=20)
-    defaults.update(kw)
-    b = Building(**defaults)
-    db.add(b)
+def make_call_history(db, *, event, building_id, kw_requested=20.0):
+    c = CallHistory(event_id=event.id, building_id=building_id,
+                    kw_requested=kw_requested, reason="peak")
+    db.add(c)
     db.commit()
-    return b
+    return c
 
 
 # Hypothesis profile shared by all property tests.

@@ -47,7 +47,16 @@ AUDIT_ACTIONS = (
     "protected_cleared",
     "reply_submitted",
     "capacity_updated",
+    # Chat / handoff layer (append-only; never remove a value).
+    "chat_agent_reply",
+    "chat_handoff_requested",
+    "chat_operator_message",
+    "chat_building_reply",
+    "chat_thread_closed",
 )
+
+THREAD_MODES = ("auto", "human")
+MESSAGE_SENDER_ROLES = ("system", "agent", "building_manager", "operator")
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -309,6 +318,92 @@ class TraceStep(Base):
     rejected_by: Mapped[str | None] = mapped_column(String(255))
 
 
+class PushSubscription(Base):
+    """One browser Web Push subscription for a user (free notification channel)."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    endpoint: Mapped[str] = mapped_column(String(512), unique=True)
+    p256dh: Mapped[str] = mapped_column(String(255))
+    auth: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Thread(Base):
+    """One automated/human conversation for one (event, building) ask.
+
+    `handoff_mode` is the switch: while "auto" the automated agent may post
+    assistant messages; "human" silences the agent so only the operator's
+    free text is posted. `needs_human` flags a thread for operator attention
+    when an agent reply fell back (Bedrock error or a suppressed banned-word
+    reply) without a mode flip.
+    """
+
+    __tablename__ = "threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
+    building_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("buildings.id", ondelete="RESTRICT"), index=True
+    )
+    handoff_mode: Mapped[str] = mapped_column(
+        String(16), default="auto", server_default="auto"
+    )
+    needs_human: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
+    closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            _in_list("handoff_mode", THREAD_MODES), name="handoff_mode_allowed"
+        ),
+        Index("uq_threads_event_id", "event_id", "building_id", unique=True),
+    )
+
+
+class Message(Base):
+    """One posted message in a thread. Append-only; rows are never deleted."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint(
+            _in_list("sender_role", MESSAGE_SENDER_ROLES),
+            name="sender_role_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("threads.id", ondelete="CASCADE"), index=True
+    )
+    event_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
+    building_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("buildings.id", ondelete="RESTRICT"), index=True
+    )
+    sender_role: Mapped[str] = mapped_column(String(32))
+    sender_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class AuditLog(Base):
     """Append-only record of human and system actions. Rows are never deleted."""
 
@@ -341,12 +436,17 @@ __all__ = [
     "EVENT_STATUSES",
     "Event",
     "HeatDayInterval",
+    "MESSAGE_SENDER_ROLES",
+    "Message",
     "MeterRead",
     "PlanBuilding",
+    "PushSubscription",
     "REPLY_KINDS",
     "ROLES",
     "Reply",
     "Session",
+    "THREAD_MODES",
+    "Thread",
     "TraceStep",
     "User",
     "Utility",

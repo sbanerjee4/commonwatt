@@ -4,27 +4,33 @@ Automated-Agent + Human-Handoff Layer for the In-App Event Chat
 
 ## 1. Approach
 
-The existing in-app chat (`app/routes/chat.py`) and its provider path
-(`notify/provider.py:InAppProvider`, `notify/models.py:send_sms`) post the
-system "ask" into a thread and let a building manager reply. This design adds
-two things on top of that thread:
+The merged branch has an in-app chat (`app/routes/chat.py`) whose system "ask"
+is posted through an SMS-shaped path (`notify/models.py:send_sms` ->
+`notify/provider.py:InAppProvider`). This design makes three changes:
 
-1. an **automated agent** that answers the manager in `auto` mode, reusing
+1. **Remove SMS entirely.** The project switched off paid SMS/Twilio; in-app
+   chat + browser Web Push are the only channels. The Twilio webhook, the SMS
+   send orchestration, the Twilio provider + signature validator, the SMS
+   templates, SMS-only `User` fields, and the SMS test suite are deleted.
+2. an **automated agent** that answers the manager in `auto` mode, reusing
    `agent/chat.py:ChatSession` + `agent/llm.py` (Bedrock), and
-2. a **human-handoff** flip (`auto -> human`) that silences the agent and hands
+3. a **human-handoff** flip (`auto -> human`) that silences the agent and hands
    the thread to a `utility` operator.
 
 A single new column — `handoff_mode` on the thread — is the switch. The agent
 posts only while the thread is `auto`; the operator posts only free text, in
 either mode, and a request-human action flips the mode and alerts the operator.
 
-**Schema reconciliation is part of this work (AC-27/AC-28).** The current chat
+**Schema reconciliation + SMS removal (AC-27..AC-31).** As merged, the chat/SMS
 code imports models that do not exist in `db/models.py` (`Message`,
 `EventBuilding`, `OutboundMessage`, `PushSubscription`), uses integer building
 ids, and references `AuditLog.reason`/`provider`, `Reply.event_id`/`kw`/
-`"counter"`, `Event.closed_at`/`building_ids`, and a `"operator"` role. None of
-those exist on main. This design defines the chat storage against main's real
-schema and rewires the route, the provider, and the tests onto it.
+`"counter"`, `Event.closed_at`/`building_ids`, a `"operator"` role, and
+`User.phone`/`sms_opted_out` — so `app.main` does not boot and tests do not
+collect. Rather than reconcile the SMS layer, this design **deletes** it (§2.5)
+and rewires only the surviving in-app + push surface onto main's real schema:
+new `Thread` + `Message` tables, the route, the provider, the browser-push
+`PushSubscription` table, and the tests.
 
 ### Decision — storage shape (`message-storage-shape`, accepted default)
 
@@ -42,6 +48,14 @@ thread for operator attention — rather than auto-flipping to `human`. The mode
 stays `auto`, so a later, healthy manager message can still get an agent reply;
 the operator sees the flag and can take over or the manager can press
 "Contact a human rep".
+
+### Decision — SMS removal (`sms-removal`, from the user)
+
+SMS/Twilio is removed, not reconciled. In-app chat is the conversation; browser
+Web Push (`notify/push.py`) is the only out-of-band nudge, kept as-is and
+best-effort (a no-op without VAPID keys). The in-app "ask" no longer rides on
+`send_sms`; it is posted straight into the thread (§5.4). `PushSubscription`
+is added to the real schema so push can store a subscription.
 
 ## 2. Data model (new, against `db/models.py`)
 
@@ -84,26 +98,67 @@ One row per posted message; append-only (AC-5).
 ### 2.3 `AuditLog` action values
 
 `AUDIT_ACTIONS` in `db/models.py` is extended (new values only; none removed)
-with: `chat_thread_opened`, `chat_agent_reply`, `chat_handoff_requested`,
-`chat_operator_message`, `chat_building_reply`, `chat_thread_closed`. The route
-writes `AuditLog(user_id=..., event_id=..., building_id=..., action=<one of
-those>, detail=<free text>)` — using the real `detail` column, not the
-phantom `reason`/`provider` the current code passes (AC-26).
+with: `chat_agent_reply`, `chat_handoff_requested`, `chat_operator_message`,
+`chat_building_reply`, `chat_thread_closed`. The route writes
+`AuditLog(user_id=..., event_id=..., building_id=..., action=<one of those>,
+detail=<free text>)` — using the real `detail` column, not the phantom
+`reason`/`provider` the merged code passes (AC-26). Thread creation itself
+writes no audit row: `audit_log.user_id` is NOT NULL and the system "ask" path
+has no acting user; AC-26's required rows all come from routes that have a
+caller.
 
-### 2.4 Reconciliation touch-ups
+### 2.4 In-app "ask" (replaces the `send_sms` entry point)
 
-- `notify/provider.py:InAppProvider.send` currently builds `Message(event_id,
-  building_id, sender_role="system", ...)`. It is rewired to resolve/create the
-  `Thread` for `(event_id, building_id)` and insert a `Message(thread_id=...,
-  sender_role="system")`. `building_id` type becomes `str`.
-- `notify/models.py:send_sms` references `Event.building_ids`; the in-app path
-  resolves membership through `plan_buildings` instead (see §4.1).
+The system "ask" formerly went `send_sms(template="building_ask", provider=
+InAppProvider)`. With SMS removed, `send_sms`, `OutboundMessage`, and the SMS
+templates are deleted. The ask is posted directly: a small
+`post_system_ask(db, event, building_id, body)` resolves/creates the `Thread`
+and inserts a `system` `Message`. `building_id` is `str`; membership is checked
+through `plan_buildings` (§3), never a phantom `Event.building_ids`. The ask
+body is plain text with no 160-char limit (it is in-app, not SMS) and still
+passes the forbidden-word check.
 
 No change to `replies`/`call_history`: a structured decision still writes a
 `Reply` row the existing way — `Reply(call_id=<the building's call_history row
 for this event>, building_id=..., kind=<"yes"|"no"|"offer">, offer_kw=<int|None>)`
 (AC-8). There is no `"counter"` kind; a kW counter is `kind="offer"` with
 `offer_kw` set.
+
+### 2.5 `push_subscriptions` + the SMS delete list
+
+Browser push is kept. `PushSubscription` is added to `db/models.py` against the
+real schema so `notify/push.py` and `app/routes/push.py` work:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `Integer` PK autoincrement | |
+| `user_id` | `Integer` FK `users.id` `ondelete=CASCADE`, indexed | |
+| `endpoint` | `String(512)` unique | push service endpoint |
+| `p256dh` | `String(255)` | client public key |
+| `auth` | `String(255)` | auth secret |
+| `created_at` | `DateTime(timezone=True)` `server_default=func.now()` | |
+
+**Deleted for SMS removal (AC-29/AC-30):**
+- `app/routes/sms.py` (Twilio inbound webhook) and its router include in
+  `app/main.py`.
+- `notify/models.py` (`send_sms`, `OutboundMessage` usage) — the module is
+  removed; the in-app ask uses `post_system_ask` instead.
+- `notify/provider.py`: `TwilioProvider`, `SimulatedProvider`, and
+  `resolve_provider`'s SMS branches; keep `InAppProvider` (rewired) or fold its
+  one method into `post_system_ask`.
+- `notify/validation.py`: `validate_signature` (keep `parse_reply_body`).
+- SMS templates in `notify/templates.py` (`building_ask` is repurposed as the
+  in-app ask text; the operator_* SMS templates and the 160-char limit are
+  dropped). Keep `FORBIDDEN_WORDS` + `_contains_forbidden`.
+- `app/config.py`: `twilio_auth_token`, `webhook_url`.
+- `scripts/send_test_sms.py`.
+- `User.phone`, `User.sms_opted_out` from `db/models.py` (they were never on
+  main, so this is removal from the merged-but-unreconciled code, not a column
+  drop migration).
+- Tests: `tests/integration/test_webhook.py`, `tests/unit/test_notify.py`,
+  `tests/properties/test_notify_access.py`, and the SMS-only cases in
+  `tests/properties/test_templates_parser.py` (keep the parser/forbidden-word
+  properties; drop the signature and 160-char tests).
 
 ## 3. Thread membership and the "open event" lookup
 
@@ -284,19 +339,26 @@ One Alembic revision in `db/migrations/versions/`:
 - `create_table("threads", ...)` with the CHECK + unique + FKs under
   `NAMING_CONVENTION`.
 - `create_table("messages", ...)` with its CHECK + FKs.
+- `create_table("push_subscriptions", ...)` with the unique `endpoint` + FK.
 - extend the `audit_log` action CHECK: on SQLite via `batch_alter_table` to
   rebuild the constraint; on Postgres drop/add the named CHECK. The
   `AUDIT_ACTIONS` tuple in the model is the source of allowed values.
 
-`Base.metadata.create_all` (used by tests, `app/db.py:init_db`) picks the new
-tables up automatically; the migration is for Postgres/`make setup`.
+There is no SMS table to drop: `OutboundMessage` was never on main, so removing
+its code needs no migration. `Base.metadata.create_all` (used by tests,
+`app/db.py:init_db`) picks the new tables up automatically; the migration is for
+Postgres/`make setup`.
 
 ## 8. Testing
 
-Rework `tests/integration/test_chat.py` and `test_chat_extras.py` onto the real
-schema (String(64) building ids via a seeded `Building`, `role="utility"` for
-the operator, `plan_buildings` for membership, a `CallHistory` row so a parsed
-reply has a `call_id`). Add:
+Rework `tests/integration/test_chat.py` and `test_chat_extras.py` and
+`tests/conftest.py` (which imports the non-existent `notify.schema`) onto the
+real schema (String(64) building ids via a seeded `Building`, `role="utility"`
+for the operator, `plan_buildings` for membership, a `CallHistory` row so a
+parsed reply has a `call_id`). Delete the SMS test files
+(`tests/integration/test_webhook.py`, `tests/unit/test_notify.py`,
+`tests/properties/test_notify_access.py`) and the SMS-only cases in
+`tests/properties/test_templates_parser.py`. Add:
 
 - **Auto reply:** manager posts in `auto`; an `agent` message appears
   (Bedrock stubbed via monkeypatching `make_session` to a fake `ChatSession`
@@ -319,11 +381,17 @@ reply has a `call_id`). Add:
   operator-message by manager 403; reply with no open event 409. (AC-23..AC-25)
 - **Provenance unit test:** assert `ChatSession.CHAT_TOOLS` names only
   `building_info` + `estimate_savings`. (AC-11)
+- **Push kept:** subscribe stores a `PushSubscription`; `notify_user` is a
+  clean no-op without VAPID keys. (AC-31)
+- **SMS gone:** `app.main` imports and the app boots; a repo check finds no
+  `send_sms` / `TwilioProvider` / `OutboundMessage` / `User.phone` reference
+  and no `app/routes/sms.py`. (AC-29, AC-30, AC-31)
 
 All run under SQLite in-memory with `Base.metadata.create_all`, no Bedrock and
 no network — the Bedrock pipeline is always stubbed in tests.
 
 ## 9. Non-goals (restated from requirements)
 
-No SMS/Twilio changes, no planner/critic changes, no multi-operator routing, no
-websocket transport. The thread keeps polling.
+SMS/Twilio is removed (not changed, not reconciled). No planner/critic changes,
+no multi-operator routing, no websocket transport — the thread keeps polling
+and browser Web Push is the only out-of-band nudge.

@@ -25,6 +25,15 @@ The agent is bound by the project's existing safety and provenance rules: it
 `source_id`) and **never uses banned words** (`cut`, `shut off`, `curtail`,
 `disconnect`).
 
+**Channel decision — SMS is removed.** The project has fully switched off paid
+SMS / Twilio; the only participant channels are the **in-app event chat** and
+**browser (Web Push) notifications**. This feature therefore also *removes* the
+SMS pathway rather than reconciling it: the Twilio webhook, the SMS send
+orchestration, the Twilio provider, SMS-only user fields, and the SMS-only
+tests are deleted, and the in-app "ask" that formerly rode on `send_sms` is
+posted directly into the thread. Browser push (`notify/push.py`,
+`app/routes/push.py`) is kept and is the sole out-of-band nudge.
+
 ### Grounding note — schema reconciliation (read before Design)
 
 The spec is planned against **main's real schema** in `db/models.py`:
@@ -42,17 +51,24 @@ The spec is planned against **main's real schema** in `db/models.py`:
   attribute;
 - event membership lives in `plan_buildings` (composite key
   `event_id, plan_version, building_id`);
-- there is no `Message`, `EventBuilding`, `OutboundMessage`, or
-  `PushSubscription` model, and `User` has no `phone` / `sms_opted_out`.
+- there is no `Message` or `Thread` model yet, and `User` has no `phone` /
+  `sms_opted_out`.
 
-The current `app/routes/chat.py`, `notify/models.py`, and
-`tests/integration/test_chat.py` import several of those missing models and
-therefore do **not** run against main. This feature treats fixing that drift
-as in-scope: the thread/message storage the handoff layer needs is defined
-against main's real schema, and the chat route, allow-lists, and tests are
-reconciled to it. The exact new tables and their columns are fixed in
-`design.md`; this document states the user-visible behaviour and the
-acceptance criteria.
+The merged `sanchali-text-alert` branch committed an SMS + in-app chat
+subsystem (`app/routes/{chat,sms,push}.py`, `notify/{models,provider,push,
+templates,validation}.py`, and the `tests/` SMS suite) that was written against
+a different, never-merged schema: it imports `Message`, `OutboundMessage`,
+`PushSubscription`, `EventBuilding`, and `notify.schema`, uses integer building
+ids and a `"operator"` role, and references `AuditLog.reason`/`provider`,
+`Reply.event_id`/`kw`/`"counter"`, `Event.closed_at`/`building_ids`, and
+`User.phone`/`sms_opted_out`. As committed, the branch does **not** import,
+`app.main` does **not** boot, and the test suite does **not** collect.
+
+Because SMS is now removed, this feature does not reconcile the SMS code — it
+**deletes** it (see the SMS-removal acceptance criteria below) and reconciles
+only the surviving in-app + push surface onto main's real schema. The exact
+new tables and the delete list are fixed in `design.md`; this document states
+the user-visible behaviour and the acceptance criteria.
 
 ## Users and goals
 
@@ -93,6 +109,12 @@ acceptance criteria.
 - **US-8** As the utility, I want the agent to be constitutionally unable to
   invent a figure or use prohibited language so that every message is safe and
   defensible.
+
+### Channel
+
+- **US-9** As the utility, I want the product to use only in-app chat and
+  browser notifications — no SMS/Twilio — so there is no paid channel, no phone
+  numbers to store, and one less thing that can leak or cost money.
 
 ## Acceptance Criteria
 
@@ -210,13 +232,27 @@ referenced by `design.md` and `tasks.md`.
   with the project's naming convention, runnable on both SQLite (dev/test) and
   Postgres.
 
+### SMS removal
+
+- **AC-29** THE SYSTEM SHALL NOT contain an SMS/Twilio send or receive path:
+  the Twilio inbound webhook (`app/routes/sms.py`), the SMS send orchestration
+  (`notify/models.py:send_sms` and `OutboundMessage`), the `TwilioProvider`,
+  the Twilio signature validator, the SMS-only templates, and the
+  Twilio-related config and scripts SHALL be removed.
+- **AC-30** THE `User` model SHALL NOT carry SMS-only fields (`phone`,
+  `sms_opted_out`), and no code path SHALL reference them.
+- **AC-31** AFTER removal, `app.main` SHALL import and boot, the only
+  participant channels SHALL be the in-app thread and browser Web Push
+  (`notify/push.py`, `app/routes/push.py`), and the full test suite SHALL
+  collect and pass with no SMS tests remaining.
+
 ## Out of scope
 
-- Paid SMS / Twilio delivery (the project has pivoted to the free in-app
-  channel; SMS modules remain untouched).
+- **Any SMS / Twilio functionality** — it is removed, not deferred (AC-29).
 - Changing the planner/critic dispatch logic or the operator event-approval
   flow.
 - Multi-operator routing or operator presence/assignment; any `utility` user
   may take over any thread for the demo utility.
 - A websocket/live-push transport for the thread itself; the thread keeps its
-  existing few-second polling model.
+  existing few-second polling model. Browser Web Push remains the only
+  out-of-band nudge, best-effort and a no-op without VAPID keys.

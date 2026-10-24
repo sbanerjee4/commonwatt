@@ -1,0 +1,38 @@
+{
+  "decisions": [
+    {
+      "id": "message-storage-shape",
+      "title": "How to store threads/messages given the merged chat code imports models that do not exist in main?",
+      "options": [
+        "Add a new Thread + Message pair of tables against main's real schema (String(64) building ids, FK to events/buildings) and rewire the route + tests onto them; handoff_mode lives on Thread",
+        "Resurrect the old-branch stand-in models (int building ids, Message/EventBuilding) and migrate main's schema toward them"
+      ],
+      "recommended": "Add a new Thread + Message pair of tables against main's real schema (String(64) building ids, FK to events/buildings) and rewire the route + tests onto them; handoff_mode lives on Thread",
+      "answer": "Add a new Thread + Message pair of tables against main's real schema (String(64) building ids, FK to events/buildings) and rewire the route + tests onto them; handoff_mode lives on Thread"
+    },
+    {
+      "id": "agent-failure-fallback",
+      "title": "When the Bedrock pipeline errors or an agent reply trips the banned-word check, what should the thread show?",
+      "options": [
+        "Persist the manager message, post one fixed agent message saying a human will follow up, and flag the thread for operator attention",
+        "Auto-flip the thread to human mode immediately"
+      ],
+      "recommended": "Persist the manager message, post one fixed agent message saying a human will follow up, and flag the thread for operator attention",
+      "answer": "Persist the manager message, post one fixed agent message saying a human will follow up, and flag the thread for operator attention"
+    },
+    {
+      "id": "sms-removal",
+      "title": "SMS/Twilio reconciliation scope after the merge",
+      "options": [
+        "Remove SMS entirely (delete Twilio webhook, send_sms, TwilioProvider, SMS templates, User.phone, SMS tests); in-app chat + browser push are the only channels",
+        "Reconcile the SMS subsystem onto main's schema and keep it"
+      ],
+      "recommended": "Remove SMS entirely (delete Twilio webhook, send_sms, TwilioProvider, SMS templates, User.phone, SMS tests); in-app chat + browser push are the only channels",
+      "answer": "Remove SMS entirely (delete Twilio webhook, send_sms, TwilioProvider, SMS templates, User.phone, SMS tests); in-app chat + browser push are the only channels"
+    }
+  ],
+  "blocking": null,
+  "context": {
+    "template": "in-app Thread/Message chat + agent/chat.py ChatSession (Bedrock) + browser Web Push; SMS removed; planned against db/models.py main schema"
+  }
+}

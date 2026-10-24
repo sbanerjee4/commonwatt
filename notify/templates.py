@@ -1,34 +1,25 @@
-"""SMS templates and rendering.
+"""In-app message text and the forbidden-word safety check.
 
 Safety (safety.md): no user-facing text may contain "cut", "shut off",
-"curtail", or "disconnect". validate_templates() runs at import so a
-forbidden word fails fast, before anything is sent.
+"curtail", or "disconnect". validate_templates() runs at import so a forbidden
+word fails fast. (The SMS templates and the 160-char limit were removed when
+SMS was dropped; only the in-app "ask" text remains.)
 """
 
 from __future__ import annotations
 
 import re
 
-MAX_SMS_LENGTH = 160
-
 FORBIDDEN_WORDS = ("cut", "shut off", "curtail", "disconnect")
 
+# The opening "ask" posted into the thread when an approved event includes a
+# building. In-app, so no length cap. Rendered with the event's own values.
 TEMPLATES: dict[str, str] = {
     "building_ask": (
-        "CommonWatt: event {window}. {building_name}: reduce {kw_requested} of "
-        "{kw_enrolled} kW. {reason}. Est. ${payment}. Reply YES, NO, or kW."
-    ),
-    "operator_draft_ready": (
-        "CommonWatt: draft event ready. {window}, {target_mw} MW, "
-        "{building_count} buildings, EJ share {ej_share}%. Approve in dashboard."
-    ),
-    "operator_backfill": (
-        "CommonWatt: {decline_count} declines (-{shortfall_mw} MW). "
-        "Backfill proposed, needs approval."
-    ),
-    "operator_unreachable": (
-        "CommonWatt: target unreachable under the {cap}% EJ cap. "
-        "Achievable {achievable_mw} MW. Raise cap or accept."
+        "CommonWatt event {window}. {building_name} is asked to reduce "
+        "{kw_requested} of {kw_enrolled} kW. {reason}. Estimated payment "
+        "${payment}. Reply YES, NO, or a kW amount — participation is "
+        "voluntary and paid."
     ),
 }
 
@@ -65,9 +56,9 @@ def validate_templates() -> None:
 def render_template(template_name: str, params: dict) -> str:
     """Render a template with params.
 
-    Raises KeyError if a required placeholder is missing from params,
-    ValueError if the rendered body is empty, exceeds MAX_SMS_LENGTH,
-    or (defensively) contains a forbidden word after substitution.
+    Raises KeyError if a required placeholder is missing, ValueError if the
+    rendered body is empty or (defensively) contains a forbidden word after
+    substitution.
     """
     template = get_template(template_name)
     try:
@@ -78,17 +69,12 @@ def render_template(template_name: str, params: dict) -> str:
         ) from exc
 
     if not body:
-        raise ValueError("rendered SMS body is empty")
+        raise ValueError("rendered body is empty")
 
     forbidden = _contains_forbidden(body)
     if forbidden is not None:
         raise ValueError(
             f"rendered body contains forbidden word {forbidden!r}"
-        )
-
-    if len(body) > MAX_SMS_LENGTH:
-        raise ValueError(
-            f"rendered body is {len(body)} chars, exceeds {MAX_SMS_LENGTH}"
         )
     return body
 
