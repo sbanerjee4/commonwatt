@@ -155,3 +155,21 @@ def test_building_chat_mocked(monkeypatch):
     body = r.json()
     assert body["buildingId"] == "129860"
     assert "Shore Plaza" in body["reply"]
+
+
+def test_all_building_markers_have_coords_and_equity():
+    """The map endpoint returns markers with real coords for most buildings and
+    exposes affluence context; unplaced buildings keep lngLat=null (not dropped)."""
+    r = client.get("/portfolio/buildings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2472
+    assert body["placed"] > 2000  # ~93% geocoded
+    placed = [b for b in body["buildings"] if b["lngLat"]]
+    assert placed, "expected geocoded buildings"
+    b = placed[0]
+    lng, lat = b["lngLat"]
+    assert -72 < lng < -70 and 42 < lat < 43  # Greater Boston bbox
+    assert b["affluenceTier"] in ("low", "middle", "high", "unknown")
+    # unplaced buildings are present with null coords, not dropped
+    assert len(body["buildings"]) == body["total"]

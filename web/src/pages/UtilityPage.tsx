@@ -1,107 +1,21 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
+import { BuildingMap } from '../components/BuildingMap'
 import { apiGet, apiPost } from '../lib/api'
 import type {
-  ZipsResponse, ZipBuildingsResponse, SavingsResponse, RecruitmentResponse,
+SavingsResponse, RecruitmentResponse,
   EventDraftResponse,
 } from '../lib/types'
 
 function MapPanel() {
-  const zips = useQuery({ queryKey: ['zips'], queryFn: () => apiGet<ZipsResponse>('/zips') })
-  const [selectedZip, setSelectedZip] = useState<string | null>(null)
-
-  const drill = useQuery({
-    queryKey: ['zip-buildings', selectedZip],
-    queryFn: () => apiGet<ZipBuildingsResponse>(`/zips/${selectedZip}/buildings`),
-    enabled: selectedZip !== null,
-  })
-
-  // Buildings whose load couldn't be geocoded/placed go to the orphan list,
-  // never silently dropped (AC-12b). Markers lack lngLat today (BFF returns
-  // null), so the drill-in shows the building list rather than map pins.
-  const markers = drill.data?.buildings ?? []
-  const orphanCount = markers.filter((b) => b.lngLat === null).length
-
   return (
-    <Panel
-      title="Portfolio grid"
-      className="map-panel"
-      tools={
-        <div className="segmented">
-          <span className="active">Available load</span>
-          <span>Building type</span>
-          <span>Previous requests</span>
-        </div>
-      }
-    >
-      <div className="map-placeholder grid-view">
-        {zips.isLoading && <p className="caption">Loading zip aggregates…</p>}
-        {zips.isError && (
-          <p className="caption">
-            Could not reach the API. Locally, run `make serve` (port 8000). On a deployed site, set
-            VITE_API_BASE_URL to the backend URL.
-          </p>
-        )}
-        {zips.data && (
-          <div className="grid-map" aria-label="Zip aggregates from the portfolio">
-            {zips.data.zips.slice(0, 12).map((z, index) => (
-              <button
-                type="button"
-                key={z.zip ?? index}
-                className={`grid-cell state-${index % 3}${selectedZip === z.zip ? ' selected' : ''}`}
-                onClick={() => setSelectedZip(z.zip)}
-              >
-                <span>{z.zip || '—'}</span>
-                <b>
-                  {z.curtailableLoadKw ? `${z.curtailableLoadKw.value.toLocaleString()} kW` : 'Load unknown'}
-                </b>
-                <small>{z.ejStatus === 'ej' ? 'EJ zip' : 'Non-EJ'} · {z.buildingCount} bldgs</small>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="legend">
-          <strong>Portfolio status</strong>
-          <span>
-            <i className="pattern-a" /> Available
-          </span>
-          <span>
-            <i className="pattern-b" /> Previously asked
-          </span>
-          <span>
-            <i className="pattern-c" /> Not enrolled
-          </span>
-        </div>
-        {selectedZip && (
-          <article className="map-popover">
-            <div>
-              <strong>Zip {selectedZip}</strong>
-              <Tag>Selected</Tag>
-            </div>
-            {drill.isLoading && <p>Loading buildings…</p>}
-            {drill.data && <p>{drill.data.buildings.length} buildings in this zip</p>}
-            {drill.data?.buildings[0] && (
-              <div>
-                <span>{drill.data.buildings[0].address}</span>
-                <b>
-                  {drill.data.buildings[0].curtailableLoadKw
-                    ? `${drill.data.buildings[0].curtailableLoadKw.value} kW`
-                    : 'Load unknown'}
-                </b>
-              </div>
-            )}
-          </article>
-        )}
-      </div>
-      <div className="orphan-list">
-        <strong>Ungrouped facilities</strong>
-        <span>{orphanCount} buildings not yet placed on the map</span>
-        <span>Geocoding pending</span>
-      </div>
+    <Panel title="Portfolio map" className="map-panel" tools={<Tag>Building pins · Boston</Tag>}>
+      <BuildingMap />
     </Panel>
   )
 }
+
 
 function SeasonPanel() {
   // Read the three savings counters from the live BFF. shed_mw=0 yields zeros

@@ -109,3 +109,26 @@ export type EventDraftResponse = {
   plan: EventPlan | null
   trace: TraceStep[]
 }
+
+// GET /portfolio/buildings — all buildings as map markers
+export type MapBuilding = {
+  buildingId: string
+  address: string
+  zip: string | null
+  lngLat: [number, number] | null
+  propertyType: string | null
+  grossAreaSf: number | null
+  curtailableLoadKw: BuildingMarkerLoad | null
+  affluenceTier: 'low' | 'middle' | 'high' | 'unknown'
+  medianIncome: number | null
+  isEj: boolean
+  canAbsorb: boolean
+  shouldProtect: boolean
+}
+
+export type AllBuildingsResponse = {
+  buildings: MapBuilding[]
+  placed: number
+  total: number
+  geocode_source_id: string
+}

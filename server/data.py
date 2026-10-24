@@ -28,6 +28,19 @@ MAX_PLAUSIBLE_EUI = 1000.0
 INCOME_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "income.json"
 INCOME_SOURCE_ID = "census_acs5_b19013"
 
+GEOCODE_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "geocoded.json"
+GEOCODE_SOURCE_ID = "census_geocoder"
+
+
+@lru_cache(maxsize=1)
+def _lnglat_by_building_id() -> dict:
+    """[lng, lat] per building id, from the committed Census geocode fixture."""
+    try:
+        with open(GEOCODE_FIXTURE_PATH) as f:
+            return json.load(f).get("lng_lat_by_building_id", {})
+    except FileNotFoundError:
+        return {}
+
 # Affluence tiers by median household income (USD). These thresholds split the
 # region into who-can-absorb-a-reduction (high) vs who-we-protect (low). The
 # planner prefers asking "high" first and spares "low".
@@ -105,12 +118,14 @@ class Building:
     load_basis: Literal["metered", "estimated_from_type", "unknown"] = field(init=False)
     median_income: int | None = field(init=False)
     affluence_tier: Literal["low", "middle", "high", "unknown"] = field(init=False)
+    lng_lat: list | None = field(init=False)
 
     def __post_init__(self) -> None:
         self.is_ej = self.zip in EJ_ZIPS
         self.curtailable_load_kw, self.load_basis = _estimate_load(self)
         self.median_income = median_income_for_zip(self.zip)
         self.affluence_tier = affluence_tier_for_income(self.median_income)
+        self.lng_lat = _lnglat_by_building_id().get(self.building_id)
 
     @property
     def is_protected(self) -> bool:
@@ -197,6 +212,8 @@ class Building:
             "should_protect": self.should_protect,
             "socioeconomic_priority": round(self.socioeconomic_priority, 2),
             "income_source_id": INCOME_SOURCE_ID if self.median_income else None,
+            "lng_lat": self.lng_lat,
+            "geocode_source_id": GEOCODE_SOURCE_ID if self.lng_lat else None,
         }
 
 
