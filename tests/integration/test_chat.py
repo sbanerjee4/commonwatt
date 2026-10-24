@@ -130,6 +130,6 @@ def test_operator_forbidden_word_rejected(ctx):
 
 def test_building_cannot_read_other_building(ctx):
     c, db, ids = ctx
-    r = c.get(f"/inbox/{ids['bld'] + 999}",
+    r = c.get(f"/inbox/{ids['bld']}-other",
               headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
     assert r.status_code == 403

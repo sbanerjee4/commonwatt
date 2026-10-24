@@ -37,7 +37,7 @@ NAMING_CONVENTION = {
 
 ROLES = ("utility", "building_manager")
 EVENT_STATUSES = ("draft", "approved", "rejected")
-REPLY_KINDS = ("yes", "no", "offer")
+REPLY_KINDS = ("yes", "no", "offer", "counter")
 AUDIT_ACTIONS = (
     "approved",
     "rejected",
@@ -55,6 +55,14 @@ AUDIT_ACTIONS = (
     "chat_building_reply",
     "chat_operator_message",
     "chat_thread_closed",
+    # Inbound SMS webhook (app/routes/sms.py).
+    "sms_webhook_invalid_signature",
+    "sms_unregistered_sender",
+    "sms_opted_out",
+    "sms_opted_in",
+    "sms_unrecognized_body",
+    "sms_no_active_event",
+    "sms_received",
 )
 
 # Message sender roles for the in-app (event, building) thread.
@@ -270,7 +278,14 @@ class CallHistory(Base):
 
 
 class Reply(Base):
-    """A building's answer to a call. Simulated rows are flagged `simulated=True`."""
+    """A building's answer to a call or an in-app/SMS event thread.
+
+    Two provenances share this table:
+      - approved-call flow: `call_id` set, kinds yes/no/offer, `offer_kw`;
+      - in-app chat + inbound SMS: `event_id` set (no call row), kind may be
+        "counter" with the countered amount in `kw`.
+    Exactly one of `call_id` / `event_id` identifies the context.
+    """
 
     __tablename__ = "replies"
     __table_args__ = (
@@ -278,14 +293,19 @@ class Reply(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    call_id: Mapped[int] = mapped_column(
+    call_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("call_history.id", ondelete="RESTRICT"), index=True
+    )
+    event_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("events.id", ondelete="RESTRICT"), index=True
     )
     building_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("buildings.id", ondelete="RESTRICT"), index=True
     )
     kind: Mapped[str] = mapped_column(String(16))
     offer_kw: Mapped[float | None] = mapped_column(Float)
+    # Countered kW for an in-app/SMS "counter" reply.
+    kw: Mapped[float | None] = mapped_column(Float)
     ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
@@ -355,7 +375,7 @@ class AuditLog(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     event_id: Mapped[int | None] = mapped_column(

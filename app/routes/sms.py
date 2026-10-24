@@ -42,7 +42,7 @@ def _xml(message: str, status: int = 200) -> Response:
 
 def _audit(db, *, user_id, event_id, action, reason):
     db.add(AuditLog(user_id=user_id, event_id=event_id, action=action,
-                    reason=reason, provider="twilio"))
+                    detail=reason, provider="twilio"))
 
 
 @router.post("/sms/inbound", tags=["sms"])
@@ -120,7 +120,7 @@ async def inbound_webhook(request: Request, db=Depends(get_db)) -> Response:
     return _xml(MSG_GOT_IT)
 
 
-def _open_event_for_building(db, building_id: int):
+def _open_event_for_building(db, building_id: str):
     """Most recent approved, not-yet-closed event asking this building."""
     stmt = (
         select(Event)
