@@ -73,7 +73,7 @@ def get_zip_buildings(zip_code: str) -> dict[str, Any]:
             "buildingId": b.building_id,
             "address": b.address,
             "zip": b.zip,
-            "lngLat": None,
+            "lngLat": b.lng_lat,
             "propertyType": b.property_type,
             "grossAreaSf": b.gross_area_sf,
             "curtailableLoadKw": load,
@@ -83,6 +83,39 @@ def get_zip_buildings(zip_code: str) -> dict[str, Any]:
             "shouldProtect": b.should_protect,
         })
     return {"zip": zip_code, "buildings": markers}
+
+
+@router.get("/portfolio/buildings")
+def get_all_building_markers() -> dict[str, Any]:
+    """All geocoded buildings as map markers, for the portfolio map.
+
+    Buildings without coordinates (failed geocoding) are returned with
+    lngLat=null so the client can list them in an orphan panel rather than
+    drop them (AC-12b).
+    """
+    markers = []
+    for b in load_buildings():
+        load = None
+        if b.curtailable_load_kw is not None:
+            load = {"value": b.curtailable_load_kw, "source_id": EJ_SOURCE_ID,
+                    "basis": b.load_basis}
+        markers.append({
+            "buildingId": b.building_id,
+            "address": b.address,
+            "zip": b.zip,
+            "lngLat": b.lng_lat,
+            "propertyType": b.property_type,
+            "grossAreaSf": b.gross_area_sf,
+            "curtailableLoadKw": load,
+            "affluenceTier": b.affluence_tier,
+            "medianIncome": b.median_income,
+            "isEj": b.is_ej,
+            "canAbsorb": b.can_absorb,
+            "shouldProtect": b.should_protect,
+        })
+    placed = sum(1 for m in markers if m["lngLat"])
+    return {"buildings": markers, "placed": placed, "total": len(markers),
+            "geocode_source_id": "census_geocoder"}
 
 
 @router.get("/portfolio/buildings/{building_id}")
