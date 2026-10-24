@@ -24,7 +24,7 @@ load_dotenv(override=True)
 
 # Default Bedrock model id for Claude 3.5 Haiku.
 # Override via COMMONWATT_MODEL_ID in .env if a different model is enabled.
-DEFAULT_MODEL_ID = "anthropic.claude-3-5-haiku-20241022-v1:0"
+DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 def get_model_id() -> str:
