@@ -1,0 +1,34 @@
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "commonwatt"
+version = "0.1.0"
+description = "Commonwatt: dashboards, data model, MCP tools and agent loop"
+authors = []
+readme = "README.md"
+license = "MIT"
+packages = [
+    { include = "commonwatt_mcp", from = "mcp" },
+    { include = "app" },
+    { include = "db" },
+    { include = "agent" },
+    { include = "sim" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+fastapi = "*"
+sqlalchemy = ">=2"
+alembic = "*"
+psycopg2-binary = "*"
+bcrypt = "*"
+pydantic = "*"
+fastmcp = "*"
+pytest = "*"
+hypothesis = "*"
+httpx = "*"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

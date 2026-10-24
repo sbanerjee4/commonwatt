@@ -46,3 +46,6 @@ build/
 .env
 .env.local
 .DS_Store
+
+# Local SQLite database (default DATABASE_URL)
+commonwatt.db

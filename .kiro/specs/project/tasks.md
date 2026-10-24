@@ -11,43 +11,65 @@ Each of tasks 1–4 ends with a `make test` checkpoint.
 
 ## Tasks
 
-- [ ] 1. Data model + seed (roles: `utility`, `building_manager`)
-  - [ ] 1.1 Scaffold the Python project
+- [ ] 1. Data model + account auth (roles: `utility`, `building_manager`)
+  - Scope note: Task 1 delivers the schema and the authentication accounts ONLY.
+    The real dataset (BERDO, geocoding, EJ zips, zip hexes, heat day) is NOT
+    finalized, so all dataset-builder scripts, fixtures, and dataset-driven
+    territory/building seeding move to task 1b and stay blocked until the
+    dataset is chosen. Task 1 seeds a minimal, hardcoded placeholder territory
+    purely so the auth accounts have valid rows to reference.
+  - [x] 1.1 Scaffold the Python project
     - `pyproject.toml` (Python 3.12; fastapi, sqlalchemy>=2, alembic, psycopg2-binary, bcrypt, pydantic, fastmcp, pytest, hypothesis, httpx) with `packages = [{ include = "commonwatt_mcp", from = "mcp" }]` plus `app`, `db`, `agent`, `sim`; no `mcp/__init__.py`
     - pytest config (testpaths `tests`, Hypothesis profile with `max_examples=100`), empty `tests/properties/`
     - `db/config.py`: read `DATABASE_URL`, default `sqlite:///./commonwatt.db`; engine/session factory
     - _Requirements: AC-49, AC-55_
-  - [ ] 1.2 Define SQLAlchemy models in `db/models.py`
+  - [x] 1.2 Define SQLAlchemy models in `db/models.py`
     - Tables from design "Data Models": `utilities`, `zips`, `zip_utility`, `buildings`, `users`, `sessions`, `events`, `plan_buildings`, `call_history`, `replies`, `meter_reads`, `heat_day_intervals`, `trace_steps`, `audit_log`
     - `users` CHECK constraint tying `role` to `utility_id` / `building_id`; `simulated` columns; `audit_log.action` enum
     - _Requirements: AC-49, AC-50, AC-32, AC-48_
-  - [ ] 1.3 Add Alembic environment and the initial migration
+  - [x] 1.3 Add Alembic environment and the initial migration
     - `db/migrations/` reading `DATABASE_URL`; one revision creating every table, running on SQLite and Postgres
     - _Requirements: AC-49_
-  - [ ] 1.4 Write the offline fixture-builder scripts in `scripts/`
-    - `build_berdo_subset.py` (BERDO resource `43e4abc9-…`, covers every Boston zip, keeps rows missing EUI/electricity share), `geocode_berdo.py`, `build_zip_utility.py`, `build_ej_zips.py` (rule: any EJ block-group centroid in zip), `build_zip_hexes.py`, `build_heat_day.py`
-    - Each writes source id + URL into its output header; never invoked by `make setup`
-    - _Requirements: AC-50, AC-11c, AC-12b, AC-34_
-  - [ ] 1.5 Commit fixtures under `fixtures/`
-    - `berdo_subset.csv`, `berdo_geocodes.csv` (failed rows kept with null coords), `zip_utility.csv`, `ej_zips.csv`, `zip_hexes.geojson`, `heat_day.csv` (simulated)
-    - _Requirements: AC-50, AC-11c, AC-12, AC-12b, AC-34_
-  - [ ] 1.6 Implement territory and building seeding in `db/seed.py`
-    - Load fixtures into `utilities`, `zips`, `zip_utility`, `buildings` (seeded enrollment/capacity `simulated=true`), `heat_day_intervals`; abort naming the row on CHECK/FK violation; networkless
-    - _Requirements: AC-50, AC-12b, AC-32_
-  - [ ] 1.7 Seed demo accounts in `db/seed.py`
-    - `utility@demo` / `demo-utility-pass` for the Boston BERDO utility; `building1..3@demo` / `demo-building-pass` on three buildings in different zips, one in an EJ zip, one flagged protected; bcrypt hashes generated at seed time; no sign-up/reset data
+  - [x] 1.4 Seed a minimal placeholder territory in `db/seed.py`
+    - Hardcoded in-file constants only — NO dataset, NO network, NO fixtures: one
+      placeholder `utility`, 3 `zips` (one flagged EJ), `zip_utility` rows, and 3
+      `buildings` (one in the EJ zip, one flagged protected) so auth accounts have
+      valid FKs; every seeded row `simulated=true`
+    - Marked clearly as placeholder data to be replaced by task 1b
+    - _Requirements: AC-49, AC-32_
+  - [x] 1.5 Seed demo accounts in `db/seed.py`
+    - `utility@demo` / `demo-utility-pass` on the placeholder utility; `building1..3@demo` / `demo-building-pass` on the three placeholder buildings (different zips, one EJ, one protected); bcrypt hashes generated at seed time; no sign-up/reset data
     - _Requirements: AC-51, AC-52, AC-54, AC-49_
-  - [ ] 1.8 Wire `make setup` / `make test` and document demo accounts
+  - [ ] 1.6 Wire `make setup` / `make test` and document demo accounts
     - `Makefile`: `setup` installs deps, runs `alembic upgrade head`, runs `db/seed.py`; `test` runs pytest
     - `README.md` "Demo accounts" table (email, password, role, scope)
     - _Requirements: AC-51, AC-52, AC-53_
-  - [ ]* 1.9 Write schema-constraint unit tests (`tests/test_schema.py`)
+  - [ ]* 1.7 Write schema-constraint unit tests (`tests/test_schema.py`)
     - `users` CHECK rejects mismatched role/ids; FKs enforced; `utility_id` derivable for building managers
     - _Requirements: AC-49_
-  - [ ]* 1.10 Write seed-invariant tests (`tests/test_seed.py`)
-    - Demo accounts exist and bcrypt-verify; three distinct zips, one EJ, one protected; every zip mapped to a utility with source id; null-geocode buildings retained; seeded rows `simulated=true`
-    - _Requirements: AC-50, AC-51, AC-52, AC-54, AC-12b, AC-32_
-  - [ ] 1.11 Checkpoint: Run `make test` and report the test summary to the user before continuing.
+  - [ ]* 1.8 Write auth-seed-invariant tests (`tests/test_seed.py`)
+    - Demo accounts exist and bcrypt-verify; four accounts across the two roles; three distinct zips, one EJ, one protected; seeded rows `simulated=true`
+    - _Requirements: AC-51, AC-52, AC-54, AC-32_
+  - [ ] 1.9 Checkpoint: Run `make test` and report the test summary to the user before continuing.
+
+- [ ] 1b. Dataset ingestion + real territory seed — BLOCKED until the dataset is finalized
+  - Blocking decision: the production dataset (BERDO vs alternative), geocoding
+    approach, EJ-zip rule, and geography grain (zip-only vs building pins) are
+    NOT yet concrete. Do not start 1b until the user confirms the dataset.
+    Replaces the placeholder territory from task 1.4 with real seeded rows.
+  - [ ] 1b.1 Write the offline fixture-builder scripts in `scripts/`
+    - `build_berdo_subset.py` (BERDO resource `43e4abc9-…`, covers every Boston zip, keeps rows missing EUI/electricity share), `geocode_berdo.py`, `build_zip_utility.py`, `build_ej_zips.py` (rule: any EJ block-group centroid in zip), `build_zip_hexes.py`, `build_heat_day.py`
+    - Each writes source id + URL into its output header; never invoked by `make setup`
+    - _Requirements: AC-50, AC-11c, AC-12b, AC-34_
+  - [ ] 1b.2 Commit fixtures under `fixtures/`
+    - `berdo_subset.csv`, `berdo_geocodes.csv` (failed rows kept with null coords), `zip_utility.csv`, `ej_zips.csv`, `zip_hexes.geojson`, `heat_day.csv` (simulated)
+    - _Requirements: AC-50, AC-11c, AC-12, AC-12b, AC-34_
+  - [ ] 1b.3 Replace placeholder territory seeding with real fixtures in `db/seed.py`
+    - Load fixtures into `utilities`, `zips`, `zip_utility`, `buildings` (seeded enrollment/capacity `simulated=true`), `heat_day_intervals`; re-point demo accounts at real rows; abort naming the row on CHECK/FK violation; networkless
+    - _Requirements: AC-50, AC-12b, AC-32_
+  - [ ]* 1b.4 Write territory-seed-invariant tests (`tests/test_seed_territory.py`)
+    - Every zip mapped to a utility with source id; null-geocode buildings retained; seeded rows `simulated=true`
+    - _Requirements: AC-50, AC-12b, AC-32_
 
 - [ ] 2. MCP tools + property tests
   - [ ] 2.1 Implement `mcp/commonwatt_mcp/constants.py`
