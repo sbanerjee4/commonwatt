@@ -2,11 +2,15 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { BuildingMap } from '../components/BuildingMap'
+import { ChatThread } from '../components/ChatThread'
 import { apiGet, apiPost, ApiError } from '../lib/api'
+import { getUnread } from '../lib/chat'
 import type {
 SavingsResponse, RecruitmentResponse,
   EventDraftResponse,
   EventPlan,
+  ZipsResponse,
+  ZipBuildingsResponse,
 } from '../lib/types'
 
 function MapPanel() {
@@ -326,6 +330,85 @@ function OperatorAndAgent() {
   )
 }
 
+// Tiny unread indicator for a facility in the conversations list. Polls
+// GET /inbox/{buildingId}/unread?since=0 every 4s (cookie auth, no role
+// headers) and renders a dot only when there is unread activity.
+function UnreadDot({ buildingId }: { buildingId: string }) {
+  const unread = useQuery({
+    queryKey: ['unread', buildingId],
+    queryFn: () => getUnread(buildingId, 0),
+    refetchInterval: 4000,
+    retry: false,
+  })
+
+  if (!unread.data || unread.data.unread <= 0) return null
+  return <span className="unread-dot" aria-label={`${unread.data.unread} unread`} />
+}
+
+// Operator "Facility conversations" panel: pick a zip, pick a facility from the
+// left list, and the right pane shows that building's live conversation thread.
+function ConversationsPanel() {
+  const [zip, setZip] = useState('')
+  const [selected, setSelected] = useState('')
+
+  const zips = useQuery({
+    queryKey: ['zips'],
+    queryFn: () => apiGet<ZipsResponse>('/zips'),
+  })
+
+  const buildings = useQuery({
+    queryKey: ['zip-buildings', zip],
+    queryFn: () => apiGet<ZipBuildingsResponse>(`/zips/${zip}/buildings`),
+    enabled: zip !== '',
+  })
+
+  const onPickZip = (next: string) => {
+    setZip(next)
+    setSelected('')
+  }
+
+  return (
+    <Panel
+      title="Facility conversations"
+      className="conversations-panel"
+      tools={<Tag>Live inbox</Tag>}
+    >
+      <div className="conversations-body">
+        <div className="conversations-list">
+          <select value={zip} onChange={(e) => onPickZip(e.target.value)}>
+            <option value="">Select a zip…</option>
+            {zips.data?.zips.map((z) => (
+              <option key={z.zip} value={z.zip}>
+                {z.zip} · {z.buildingCount} buildings
+              </option>
+            ))}
+          </select>
+
+          {buildings.isLoading && zip !== '' && <p className="caption">Loading facilities…</p>}
+          {buildings.data?.buildings.map((b) => (
+            <button
+              key={b.buildingId}
+              className={`conversation-item ${selected === b.buildingId ? 'active' : ''}`.trim()}
+              onClick={() => setSelected(b.buildingId)}
+            >
+              <span>{b.address}</span>
+              <UnreadDot buildingId={b.buildingId} />
+            </button>
+          ))}
+        </div>
+
+        <div className="conversations-detail">
+          {selected ? (
+            <ChatThread buildingId={selected} />
+          ) : (
+            <p className="caption">Select a facility to view its conversation.</p>
+          )}
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 export function UtilityPage() {
   return (
     <div className="workspace">
@@ -343,6 +426,7 @@ export function UtilityPage() {
           <OperatorAndAgent />
           <SeasonPanel />
           <RecruitmentPanel />
+          <ConversationsPanel />
         </div>
       </main>
     </div>
