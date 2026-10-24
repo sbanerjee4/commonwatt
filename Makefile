@@ -1,33 +1,40 @@
-.PHONY: setup demo test mcp chat
+.PHONY: setup test mcp chat demo bff check-bedrock
+
+PY ?= python3
 
 # Install Python dependencies
 setup:
-	pip install -e ".[dev]" 2>/dev/null || pip install fastmcp anthropic hypothesis pytest pytest-asyncio python-dotenv
+	pip install -e . 2>/dev/null || pip install fastmcp anthropic hypothesis pytest pytest-asyncio python-dotenv fastapi "uvicorn[standard]" httpx
 
-# Run property-based tests (no LLM calls — pure tool tests)
+# Run all tests (property-based tool tests + BFF endpoint tests; no LLM calls)
 test:
-	PYTHONPATH=. pytest tests/properties/ -v
+	PYTHONPATH=. $(PY) -m pytest tests/ -v
 
-# Start the MCP server (stdio mode for Kiro integration)
+# Start the Commonwatt MCP server (stdio mode — the same server Kiro registers)
 mcp:
-	PYTHONPATH=. python -m mcp.tools
+	PYTHONPATH=. $(PY) -m server.tools
 
-# Run the building chat agent interactively (requires ANTHROPIC_API_KEY)
-# Usage: make chat BUILDING=129860
+# Start the BFF API the front-end talks to (binds to 127.0.0.1)
+bff:
+	PYTHONPATH=. $(PY) -m uvicorn bff.app:app --host 127.0.0.1 --port 8000
+
+# Verify the Bedrock key + region + model access are working
+check-bedrock:
+	PYTHONPATH=. $(PY) -m agent.check_bedrock
+
+# Chat with the building agent (requires Bedrock). Usage: make chat BUILDING=129860
 BUILDING ?= 129860
 chat:
-	PYTHONPATH=. python -m agent.chat $(BUILDING)
+	PYTHONPATH=. $(PY) -m agent.chat $(BUILDING)
 
-# Demo: run a planner loop against the fixture data (requires ANTHROPIC_API_KEY)
+# Demo: run the planner/critic loop and print the trace (requires Bedrock).
+# Uses a target+cap that triggers the v1-rejected -> v2-approved equity story.
 demo:
-	PYTHONPATH=. python -c "\
-import os, json; \
+	PYTHONPATH=. $(PY) -c "\
 from agent.planner import run_planner; \
-result = run_planner(target_mw=10.0, ej_cap_pct=0.35, current_temp_f=88.0); \
-print('Approved:', result.approved); \
-print('Iterations:', result.iterations); \
-plan = result.final_plan; \
-print(f'Plan: {plan.achieved_mw:.1f} MW, {plan.building_count} buildings, EJ share {plan.ej_share_pct:.1f}%') if plan else print('No plan'); \
-print('\\nTrace:'); \
-[print(f'  [{s.kind}] {s.summary}') for s in result.trace] \
-"
+r = run_planner(target_mw=20.0, ej_cap_pct=0.35, current_temp_f=88.0); \
+print('Approved:', r.approved, '| iterations:', r.iterations); \
+p = r.final_plan; \
+print(f'Final plan v{p.version}: {p.achieved_mw:.1f} MW, {p.building_count} buildings, EJ share {p.ej_share_pct:.1f}%') if p else print('No plan'); \
+print(); print('Trace:'); \
+[print(f'  [{s.kind}] {s.summary}') for s in r.trace]"

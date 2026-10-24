@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "commonwatt": {
+      "command": "python3",
+      "args": ["-m", "server.tools"],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "."
+      },
+      "disabled": false,
+      "autoApprove": [
+        "estimate_load",
+        "rank_candidates",
+        "check_constraints",
+        "score_equity",
+        "plan_event",
+        "backfill",
+        "estimate_savings",
+        "recruitment_list",
+        "building_info"
+      ]
+    }
+  }
+}
