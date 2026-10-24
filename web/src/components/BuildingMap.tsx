@@ -9,27 +9,27 @@ type GroupBy = 'equity' | 'ej' | 'load'
 
 const BOSTON_CENTER: [number, number] = [-71.057, 42.335]
 
-// Colorblind-safe palette. Equity: low income = protect (teal), high = ask-first (amber).
 function colorFor(b: MapBuilding, group: GroupBy): string {
-  if (group === 'ej') return b.isEj ? '#2a9d8f' : '#9aa0a6'
+  if (group === 'ej') return b.isEj ? '#17a398' : '#2563eb'
   if (group === 'load') {
     const kw = b.curtailableLoadKw?.value ?? 0
-    return kw > 2000 ? '#e76f51' : kw > 500 ? '#e9c46a' : '#8ab4c4'
+    return kw > 2000 ? '#e63946' : kw > 500 ? '#f4a261' : '#2563eb'
   }
-  // equity by affluence tier
   switch (b.affluenceTier) {
-    case 'low': return '#2a9d8f'    // protect
-    case 'middle': return '#8ab4c4'
-    case 'high': return '#e9a23b'   // ask first
-    default: return '#9aa0a6'
+    case 'low': return '#17a398'
+    case 'middle': return '#2563eb'
+    case 'high': return '#f59e0b'
+    default: return '#64748b'
   }
 }
 
 export function BuildingMap() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
+  const markersRef = useRef<maplibregl.Marker[]>([])
+  const loadedRef = useRef(false)
   const [group, setGroup] = useState<GroupBy>('equity')
-  const [ready, setReady] = useState(false)
+  const [tick, setTick] = useState(0)
 
   const query = useQuery({
     queryKey: ['all-buildings'],
@@ -41,7 +41,6 @@ export function BuildingMap() {
     if (mapRef.current || !containerRef.current) return
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // Keyless raster basemap (OSM tiles via the demo style). No token needed.
       style: {
         version: 8,
         sources: {
@@ -58,98 +57,67 @@ export function BuildingMap() {
       zoom: 11,
     })
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
-    map.on('load', () => setReady(true))
+    const done = () => { loadedRef.current = true; setTick((t) => t + 1) }
+    if (map.loaded()) done()
+    else map.on('load', done)
     mapRef.current = map
-    return () => {
-      map.remove()
-      mapRef.current = null
-    }
+    return () => { map.remove(); mapRef.current = null; loadedRef.current = false }
   }, [])
 
-  // (re)build the GeoJSON source + layer when data or grouping changes
+  // (re)place HTML markers whenever data / grouping changes
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !ready || !query.data) return
+    if (!map || !loadedRef.current || !query.data) return
 
-    const features = query.data.buildings
-      .filter((b) => b.lngLat)
-      .map((b) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: b.lngLat as [number, number] },
-        properties: {
-          color: colorFor(b, group),
-          address: b.address,
-          tier: b.affluenceTier,
-          income: b.medianIncome ?? 0,
-          ej: b.isEj ? 'yes' : 'no',
-          kw: b.curtailableLoadKw?.value ?? 0,
-          type: b.propertyType ?? '',
-        },
-      }))
+    // clear old markers
+    for (const m of markersRef.current) m.remove()
+    markersRef.current = []
 
-    const data = { type: 'FeatureCollection' as const, features }
-    const existing = map.getSource('buildings') as maplibregl.GeoJSONSource | undefined
-    if (existing) {
-      existing.setData(data)
-      return
+    const buildings = query.data.buildings.filter((b) => b.lngLat)
+    // eslint-disable-next-line no-console
+    console.log('[BuildingMap] placing', buildings.length, 'HTML markers')
+
+    const bounds = new maplibregl.LngLatBounds()
+
+    for (const b of buildings) {
+      const [lng, lat] = b.lngLat as [number, number]
+      const kw = b.curtailableLoadKw?.value ?? 0
+      const size = Math.max(14, Math.min(46, 14 + Math.sqrt(kw) * 0.7))
+
+      const el = document.createElement('div')
+      el.className = 'bldg-dot'
+      el.style.width = `${size}px`
+      el.style.height = `${size}px`
+      el.style.background = colorFor(b, group)
+
+      const income = b.medianIncome ? `$${(b.medianIncome / 1000).toFixed(0)}k median income` : 'income n/a'
+      const kwLabel = kw ? `${kw.toLocaleString()} kW curtailable` : 'load unknown'
+      const html =
+        `<div class="bldg-popup">` +
+        `<strong>${b.address}</strong>` +
+        `<div>${b.propertyType ?? 'Building'}${b.zip ? ' · ' + b.zip : ''}</div>` +
+        `<div>${income} · <b>${b.affluenceTier}</b> income</div>` +
+        `<div>${kwLabel}</div>` +
+        (b.isEj ? `<div class="bldg-popup-ej">EJ zip — protected</div>` : '') +
+        `</div>`
+
+      // Attaching the popup to the marker makes the whole dot clickable
+      // reliably (MapLibre forwards the marker click to its popup).
+      const popup = new maplibregl.Popup({ closeButton: true, offset: 16 }).setHTML(html)
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .setPopup(popup)
+        .addTo(map)
+      markersRef.current.push(marker)
+      bounds.extend([lng, lat])
     }
 
-    map.addSource('buildings', { type: 'geojson', data })
-    map.addLayer({
-      id: 'building-pins',
-      type: 'circle',
-      source: 'buildings',
-      paint: {
-        // Big, obvious circles that grow as you zoom in, sized by load.
-        'circle-radius': [
-          'interpolate', ['linear'], ['zoom'],
-          10, ['interpolate', ['linear'], ['get', 'kw'], 0, 6, 2000, 14],
-          14, ['interpolate', ['linear'], ['get', 'kw'], 0, 10, 2000, 26],
-        ],
-        'circle-color': ['get', 'color'],
-        'circle-opacity': 0.85,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
-      },
-    })
+    if (buildings.length > 0) {
+      map.fitBounds(bounds, { padding: 40, maxZoom: 13, duration: 0 })
+    }
+  }, [query.data, group, tick])
 
-    // A subtle outer glow ring so the circles pop against the map.
-    map.addLayer({
-      id: 'building-pins-halo',
-      type: 'circle',
-      source: 'buildings',
-      paint: {
-        'circle-radius': [
-          'interpolate', ['linear'], ['zoom'],
-          10, ['interpolate', ['linear'], ['get', 'kw'], 0, 9, 2000, 18],
-          14, ['interpolate', ['linear'], ['get', 'kw'], 0, 14, 2000, 32],
-        ],
-        'circle-color': ['get', 'color'],
-        'circle-opacity': 0.18,
-      },
-    }, 'building-pins')
-
-    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: true })
-    map.on('click', 'building-pins', (e: maplibregl.MapLayerMouseEvent) => {
-      const f = e.features?.[0]
-      if (!f) return
-      const p = f.properties as Record<string, string>
-      const income = Number(p.income) ? `$${(Number(p.income) / 1000).toFixed(0)}k median income` : 'income n/a'
-      const kw = Number(p.kw) ? `${Number(p.kw).toLocaleString()} kW curtailable` : 'load unknown'
-      popup
-        .setLngLat((f.geometry as { coordinates: [number, number] }).coordinates)
-        .setHTML(
-          `<strong>${p.address}</strong><br/>${p.type}<br/>${income} · ${p.tier}` +
-            `<br/>${kw}${p.ej === 'yes' ? '<br/><em>EJ zip — protected</em>' : ''}`,
-        )
-        .addTo(map)
-    })
-    map.on('mouseenter', 'building-pins', () => (map.getCanvas().style.cursor = 'pointer'))
-    map.on('mouseleave', 'building-pins', () => (map.getCanvas().style.cursor = ''))
-  }, [ready, query.data, group])
-
-  const placed = query.data?.placed ?? 0
-  const total = query.data?.total ?? 0
+  const shown = query.data?.buildings.filter((b) => b.lngLat).length ?? 0
 
   return (
     <div className="building-map">
@@ -163,7 +131,7 @@ export function BuildingMap() {
           </select>
         </label>
         <span className="map-meta">
-          {query.isLoading ? 'Loading buildings…' : `${placed.toLocaleString()} of ${total.toLocaleString()} placed`}
+          {query.isLoading ? 'Loading buildings…' : query.isError ? 'Could not reach the API' : `${shown.toLocaleString()} buildings shown`}
         </span>
       </div>
 
@@ -173,24 +141,24 @@ export function BuildingMap() {
         {group === 'equity' && (
           <>
             <strong>Median income — who we lean on vs protect</strong>
-            <span><i style={{ background: '#e9a23b' }} /> Higher income — ask first</span>
-            <span><i style={{ background: '#8ab4c4' }} /> Middle income</span>
-            <span><i style={{ background: '#2a9d8f' }} /> Lower income — protect</span>
+            <span><i style={{ background: '#f59e0b' }} /> Higher income — ask first</span>
+            <span><i style={{ background: '#2563eb' }} /> Middle income</span>
+            <span><i style={{ background: '#17a398' }} /> Lower income — protect</span>
           </>
         )}
         {group === 'ej' && (
           <>
             <strong>Environmental Justice status</strong>
-            <span><i style={{ background: '#2a9d8f' }} /> EJ zip — protect</span>
-            <span><i style={{ background: '#9aa0a6' }} /> Non-EJ</span>
+            <span><i style={{ background: '#17a398' }} /> EJ zip — protect</span>
+            <span><i style={{ background: '#2563eb' }} /> Non-EJ</span>
           </>
         )}
         {group === 'load' && (
           <>
-            <strong>Available load (pin size = kW)</strong>
-            <span><i style={{ background: '#e76f51' }} /> High</span>
-            <span><i style={{ background: '#e9c46a' }} /> Medium</span>
-            <span><i style={{ background: '#8ab4c4' }} /> Low</span>
+            <strong>Available load (circle size = kW)</strong>
+            <span><i style={{ background: '#e63946' }} /> High</span>
+            <span><i style={{ background: '#f4a261' }} /> Medium</span>
+            <span><i style={{ background: '#2563eb' }} /> Low</span>
           </>
         )}
       </div>

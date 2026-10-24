@@ -450,10 +450,42 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 .chat-suggestions .ui-button { font-size: var(--text-sm); }
 
 /* Portfolio building map */
-.building-map { display: grid; gap: var(--space-3); }
-.map-controls { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.building-map { display: grid; gap: var(--space-3); padding: var(--space-4); }
+/* Controls row: label+select on the left, count on the right, with a gap
+   between them (not pushed to opposite edges). */
+.map-controls { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 .map-controls label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-muted); }
 .map-controls select { padding: var(--space-1) var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); }
-.map-meta { font-size: var(--text-sm); color: var(--color-muted); }
+.map-meta { font-size: var(--text-sm); color: var(--color-muted); margin-left: auto; }
 .map-canvas { height: 420px; width: 100%; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-line); }
-.map-legend i { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; vertical-align: middle; margin-right: var(--space-1); }
+/* Override the global absolute-positioned .legend: the map legend sits in
+   normal flow BELOW the map so it never overlaps the panel underneath. */
+.building-map .map-legend {
+  position: static;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  box-shadow: none;
+}
+.building-map .map-legend strong { flex-basis: 100%; }
+.building-map .map-legend span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.map-legend i { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; border: none; vertical-align: middle; margin-right: var(--space-1); }
+
+/* Building dots rendered as HTML markers (always render, unlike canvas layers) */
+.bldg-dot {
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.3);
+  opacity: 0.9;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.bldg-dot:hover { transform: scale(1.3); opacity: 1; z-index: 10; }
+
+/* Building popup (compact) */
+.bldg-popup { font-family: var(--font-body); font-size: 0.72rem; line-height: 1.3; display: grid; gap: 1px; min-width: 130px; max-width: 200px; }
+.bldg-popup strong { font-size: 0.78rem; }
+.bldg-popup-ej { margin-top: 2px; color: #0f766e; font-style: italic; font-weight: 600; }
+.maplibregl-popup-content { border-radius: 7px; padding: 7px 9px; }
+.maplibregl-popup-close-button { font-size: 0.9rem; padding: 0 4px; }
