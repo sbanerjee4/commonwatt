@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { BuildingMap } from '../components/BuildingMap'
@@ -12,6 +12,118 @@ SavingsResponse, RecruitmentResponse,
   AllBuildingsResponse,
   MapBuilding,
 } from '../lib/types'
+
+
+// One or two sentences describing what the proposal changes, built from the
+// live plan + trace — no invented numbers.
+function buildProposalSummary(data: EventDraftResponse): string {
+  const p = data.plan
+  if (!p) return ''
+  const lead =
+    `This proposal asks ${p.buildingCount} buildings to reduce ` +
+    `${p.achievedMw.toFixed(1)} MW (target ${p.targetMw} MW), with ` +
+    `${p.ejSharePct.toFixed(1)}% of load from equity-priority zips (cap ${p.ejCapPct.toFixed(0)}%).`
+  const correction = data.trace.find((s) => s.kind === 'self_correct')
+  return correction ? `${lead} ${correction.summary}` : lead
+}
+
+// Build a cause→effect reasoning graph from the live agent trace. Signals and
+// checks feed decisions; the final plan is the proposal node.
+function ReasoningGraph({ data }: { data: EventDraftResponse }) {
+  const [active, setActive] = useState<string | null>(null)
+
+  const { nodes, edges } = useMemo(() => {
+    const steps = data.trace
+    const n: Array<{ id: string; label: string; kind: 'signal' | 'check' | 'decision' | 'proposal'; x: number; y: number; anchor?: 'start' | 'middle' | 'end' }> = []
+    const e: Array<{ from: string; to: string; label?: string }> = []
+    const kindFor = (k: string): 'signal' | 'check' | 'decision' | 'proposal' =>
+      k === 'forecast' ? 'signal' : k.includes('check') ? 'check' : 'decision'
+    const cols = Math.max(steps.length - 1, 1)
+    steps.forEach((s, i) => {
+      const id = `s${i}`
+      const last = i === steps.length - 1
+      n.push({
+        id,
+        label:
+          s.kind === 'plan' && s.planVersion ? `Plan v${s.planVersion}` : s.kind.replace(/_/g, ' '),
+        kind: last ? 'proposal' : kindFor(s.kind),
+        x: 6 + (i / cols) * 88,
+        y: i % 2 === 0 ? 28 : 64,
+        anchor: i === 0 ? 'start' : last ? 'end' : 'middle',
+      })
+      if (i > 0) e.push({ from: `s${i - 1}`, to: id, label: steps[i].rejectedBy ? 'rejected' : 'leads to' })
+    })
+    return { nodes: n, edges: e }
+  }, [data])
+
+  const node = (id: string) => nodes.find((nn) => nn.id === id)!
+  const edgeActive = (ed: { from: string; to: string }) =>
+    active !== null && (ed.from === active || ed.to === active)
+  const activeNode = active ? node(active) : null
+
+  return (
+    <div className="reasoning-graph">
+      <svg viewBox="-6 2 112 78" role="img" aria-label="Reasoning knowledge graph" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+          </marker>
+        </defs>
+        {edges.map((ed, i) => {
+          const a = node(ed.from)
+          const b = node(ed.to)
+          return (
+            <g key={i} className={`edge ${edgeActive(ed) ? 'edge-active' : ''}`}>
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} markerEnd="url(#arrow)" />
+              {edgeActive(ed) && ed.label && (
+                <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 1.5} className="edge-label">
+                  {ed.label}
+                </text>
+              )}
+            </g>
+          )
+        })}
+        {nodes.map((nn) => {
+          const isActive = active === nn.id
+          return (
+            <g
+              key={nn.id}
+              className={`gnode kind-${nn.kind} ${isActive ? 'gnode-active' : ''}`}
+              onMouseEnter={() => setActive(nn.id)}
+              onMouseLeave={() => setActive(null)}
+              onClick={() => setActive((cur) => (cur === nn.id ? null : nn.id))}
+              onFocus={() => setActive(nn.id)}
+              tabIndex={0}
+              role="button"
+              aria-pressed={isActive}
+            >
+              <circle cx={nn.x} cy={nn.y} r={3.4} />
+              <text
+                x={nn.anchor === 'start' ? nn.x - 3.4 : nn.anchor === 'end' ? nn.x + 3.4 : nn.x}
+                y={nn.y + 6.5}
+                textAnchor={nn.anchor ?? 'middle'}
+                className="gnode-label"
+              >
+                {nn.label}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <p className="graph-hint">
+        {activeNode
+          ? `${activeNode.label} — ${activeNode.kind}. Highlighted links show what it fed into.`
+          : 'Hover or tap a node to trace how each cause fed into the final proposal.'}
+      </p>
+      <ul className="graph-legend">
+        <li><i className="kind-signal" /> Signal</li>
+        <li><i className="kind-check" /> Constraint check</li>
+        <li><i className="kind-decision" /> Decision</li>
+        <li><i className="kind-proposal" /> Proposal</li>
+      </ul>
+    </div>
+  )
+}
 
 function MapPanel() {
   return (
@@ -113,6 +225,7 @@ function RecruitmentPanel() {
 // so the operator composer is pre-filled with a building that is in the event.
 function OperatorAndAgent() {
   const [targetMw, setTargetMw] = useState(20)
+  const [showReasoning, setShowReasoning] = useState(false)
 
   const draft = useMutation({
     mutationFn: (target: number) =>
@@ -174,7 +287,7 @@ function OperatorAndAgent() {
             onClick={() => draft.mutate(targetMw)}
             disabled={draft.isPending}
           >
-            {draft.isPending ? 'Planning…' : 'Draft event'}
+            {draft.isPending ? 'Planning…' : 'Draft proposal'}
           </button>
         </div>
 
@@ -186,6 +299,7 @@ function OperatorAndAgent() {
 
         {plan && (
           <>
+            {data && <p className="proposal-summary">{buildProposalSummary(data)}</p>}
             <div className="event-facts">
               <div>
                 <span>Target</span>
@@ -236,17 +350,50 @@ function OperatorAndAgent() {
         )}
       </Panel>
 
-      <Panel title="Planning agent" className="agent-panel" tools={<Tag>{data ? (data.approved ? 'Approved by critic' : 'Needs review') : 'Idle'}</Tag>}>
-        <div className="agent-evidence">
-          <details open>
-            <summary>
-              <span>Agent trace</span>
-              <small>
-                {data ? `${data.trace.length} steps · ${data.iterations} iteration(s)` : 'Draft an event to run the agent'}
-              </small>
-            </summary>
-            {!data && <p className="caption">The live agent trace (forecast → plan v1 → constraint check → self-correct → plan v2) appears here after you draft an event.</p>}
-            {data && (
+      <Panel
+        title="Planning agent"
+        className="agent-panel"
+        tools={
+          <div className="agent-tools">
+            <Tag>{data ? (data.approved ? 'Approved by critic' : 'Needs review') : 'Idle'}</Tag>
+            <button
+              type="button"
+              className="ui-button ghost reasoning-toggle"
+              aria-expanded={showReasoning}
+              disabled={!data}
+              onClick={() => setShowReasoning((v) => !v)}
+            >
+              {showReasoning ? 'Hide reasoning' : 'Show reasoning'}
+            </button>
+          </div>
+        }
+      >
+        {!data && (
+          <p className="caption">
+            The live agent trace (forecast → plan v1 → constraint check → self-correct → plan v2)
+            and an interactive reasoning graph appear here after you draft a proposal.
+          </p>
+        )}
+        {data && !showReasoning && (
+          <p className="caption reasoning-collapsed-hint">
+            {data.trace.length} steps retained. Select <b>Show reasoning</b> to inspect the trace and
+            the reasoning graph behind this proposal.
+          </p>
+        )}
+        {data && showReasoning && (
+          <div className="agent-evidence">
+            <div className="reasoning-graph-wrap">
+              <div className="panel-subhead">
+                <span>Reasoning graph</span>
+                <small>causes → final proposal</small>
+              </div>
+              <ReasoningGraph data={data} />
+            </div>
+            <details open>
+              <summary>
+                <span>Agent trace</span>
+                <small>{data.trace.length} steps · {data.iterations} iteration(s)</small>
+              </summary>
               <ol className="trace-list">
                 {data.trace.map((step, index) => {
                   const isRevision = step.kind === 'self_correct'
@@ -267,9 +414,9 @@ function OperatorAndAgent() {
                   )
                 })}
               </ol>
-            )}
-          </details>
-        </div>
+            </details>
+          </div>
+        )}
       </Panel>
     </>
   )
