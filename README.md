@@ -116,6 +116,21 @@ Chat with a building's assistant:
 make chat BUILDING=129860
 ```
 
+## Demo logins
+
+Seeded demo accounts (passwords are demo-only; the database stores bcrypt
+hashes, never these strings). Sign in at `/signin`.
+
+| Role | Email | Password |
+| ---- | ----- | -------- |
+| Utility operator | `utility@demo` | `demo-utility-pass` |
+| Building manager | `building1@demo` | `demo-building-pass` |
+| Building manager | `building2@demo` | `demo-building-pass` |
+| Building manager | `building3@demo` | `demo-building-pass` |
+
+The utility account lands on the operator dashboard (map + planner); a building
+account lands on that building only.
+
 ## API endpoints (BFF)
 
 Read-only unless noted. Every numeric field carries a `source_id`.
