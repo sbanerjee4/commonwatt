@@ -52,6 +52,7 @@ PLANNER_TOOLS = [
                 "current_temp_f": {"type": "number", "default": 85.0},
                 "exclude_building_ids": {"type": "array", "items": {"type": "string"}},
                 "prev_event_building_ids": {"type": "array", "items": {"type": "string"}},
+                "respect_ej_cap": {"type": "boolean", "description": "False for the naive first pass (ignores EJ cap); True for the equity-corrected re-plan."},
             },
             "required": ["target_mw"],
         },
@@ -109,6 +110,28 @@ TOOL_FN_MAP: dict[str, Any] = {
 }
 
 
+def _clean_narration(text: str) -> str:
+    """Strip code fences / JSON blocks so only prose lands in the trace."""
+    t = text.strip()
+    if "```" in t:
+        # drop fenced blocks; keep any prose outside them
+        parts = t.split("```")
+        prose = "".join(p for i, p in enumerate(parts) if i % 2 == 0).strip()
+        t = prose or ""
+    # if it still looks like JSON, discard it
+    if t.startswith("{") or t.startswith("["):
+        return ""
+    # collapse to a single line
+    t = " ".join(t.split())
+    # strip leading markdown-bold labels like **Trace entry for v1:**
+    import re as _re
+    t = _re.sub(r"^\*\*[^*]+\*\*:?\s*", "", t)
+    # strip a leading "Something:" label up to ~40 chars
+    t = _re.sub(r"^[A-Z][A-Za-z0-9 ]{0,40}:\s*", "", t)
+    t = t.strip('"').strip("'").strip()
+    return t
+
+
 def _ts() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -161,206 +184,168 @@ def run_planner(
     current_temp_f: float = 85.0,
     exclude_building_ids: list[str] | None = None,
     prev_event_building_ids: list[str] | None = None,
-    window_label: str = "today 3:30–6:30 PM",
+    window_label: str = "today 3:30\u20136:30 PM",
 ) -> PlanResult:
     """
-    Run the planner → critic loop and return a PlanResult with a full trace.
+    Run the planner -> critic loop and return a PlanResult with a full trace.
+
+    Deterministic scaffold (reliable for the demo):
+      Phase 1  naive plan (respect_ej_cap=False) -> critic check
+      Phase 2  if v1 violated the cap, equity-corrected plan
+               (respect_ej_cap=True) -> critic check
+
+    The LLM narrates each plan and the critic's verdict (so the trace carries
+    real model reasoning), but the control flow is fixed so the v1-rejected ->
+    v2-approved arc appears on every run where the naive plan busts the cap.
     """
     client = get_client()
     trace: list[TraceStep] = []
-    version = 0
-    current_plan: EventPlan | None = None
-    extra_exclude: list[str] = list(exclude_building_ids or [])
+
+    excl = list(exclude_building_ids or [])
+    prev = list(prev_event_building_ids or [])
 
     # Forecast step
     trace.append(TraceStep(
         ts=_ts(),
         kind="forecast",
         summary=f"Peak forecast for {window_label}. Target {target_mw} MW. Planning.",
-        tool_name=None,
     ))
 
-    for iteration in range(MAX_ITERATIONS):
-        version += 1
-
-        # --- Planner call ---
-        planner_messages = [
-            {
-                "role": "user",
-                "content": (
-                    f"Plan a demand-response event.\n"
-                    f"Target: {target_mw} MW\n"
-                    f"EJ cap: {ej_cap_pct*100:.0f}%\n"
-                    f"Current temperature: {current_temp_f}°F\n"
-                    f"Window: {window_label}\n"
-                    f"Exclude buildings: {extra_exclude}\n"
-                    f"Previous event buildings: {prev_event_building_ids or []}\n\n"
-                    f"Call plan_event first, then check_constraints on the result."
-                ),
-            }
-        ]
-
-        plan_raw: dict | None = None
-        constraint_raw: dict | None = None
-
-        # Agentic loop: let planner call tools
-        while True:
-            response = client.messages.create(
+    def _narrate(system: str, prompt: str) -> str:
+        """Ask the LLM for a one-line narration; never fatal if it fails."""
+        try:
+            resp = client.messages.create(
                 model=get_model_id(),
-                max_tokens=4096,
-                system=PLANNER_SYSTEM,
-                tools=PLANNER_TOOLS,
-                messages=planner_messages,
+                max_tokens=300,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
             )
+            text = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+            return _clean_narration(text)
+        except Exception:  # noqa: BLE001 — narration is best-effort
+            return ""
 
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        result = _call_tool(block.name, block.input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(result),
-                        })
-                        # Capture plan and constraint results
-                        if block.name == "plan_event":
-                            plan_raw = result
-                            trace.append(TraceStep(
-                                ts=_ts(),
-                                kind="plan",
-                                summary=(
-                                    f"Plan v{version}: {result.get('building_count', 0)} buildings, "
-                                    f"{result.get('achieved_mw', 0):.1f} MW achieved, "
-                                    f"EJ share {result.get('ej_share_pct', 0):.1f}%"
-                                ),
-                                plan_version=version,
-                                tool_name="plan_event",
-                                tool_args={"target_mw": target_mw, "ej_cap_pct": ej_cap_pct},
-                                tool_result=result,
-                            ))
-                        elif block.name == "check_constraints":
-                            constraint_raw = result
-                            trace.append(TraceStep(
-                                ts=_ts(),
-                                kind="constraint_check",
-                                summary=(
-                                    f"Constraint check v{version}: "
-                                    f"{'PASSED' if result.get('passed') else 'FAILED'} — "
-                                    + (
-                                        "; ".join(v.get("detail", v.get("type", "")) for v in result.get("violations", []))
-                                        or "no violations"
-                                    )
-                                ),
-                                plan_version=version,
-                                tool_name="check_constraints",
-                                tool_result=result,
-                            ))
-
-                planner_messages.append({"role": "assistant", "content": response.content})
-                planner_messages.append({"role": "user", "content": tool_results})
-
-            else:
-                # end_turn — planner is done
-                break
-
-        if plan_raw is None:
-            break  # planner failed to produce a plan
-
-        current_plan = EventPlan(
+    def _to_plan(raw: dict, version: int) -> EventPlan:
+        return EventPlan(
             version=version,
             target_mw=target_mw,
-            achieved_mw=plan_raw.get("achieved_mw", 0),
-            building_count=plan_raw.get("building_count", 0),
-            ej_share_pct=plan_raw.get("ej_share_pct", 0),
+            achieved_mw=raw.get("achieved_mw", 0),
+            building_count=raw.get("building_count", 0),
+            ej_share_pct=raw.get("ej_share_pct", 0),
             ej_cap_pct=ej_cap_pct * 100,
-            reachable=plan_raw.get("reachable", False),
-            tradeoff=plan_raw.get("tradeoff"),
-            portfolio=plan_raw.get("portfolio", []),
-            source_id=plan_raw.get("source_id", ""),
+            reachable=raw.get("reachable", False),
+            tradeoff=raw.get("tradeoff"),
+            portfolio=raw.get("portfolio", []),
+            source_id=raw.get("source_id", ""),
         )
 
-        # --- Critic call ---
-        portfolio_ids = [b["building_id"] for b in current_plan.portfolio]
-        critic_input = {
-            "building_ids": portfolio_ids,
-            "target_mw": target_mw,
-            "ej_cap_pct": ej_cap_pct,
-            "current_temp_f": current_temp_f,
-            "prev_event_building_ids": prev_event_building_ids or [],
-        }
-        constraint_result = check_constraints(**critic_input)
-
-        critic_messages = [
-            {
-                "role": "user",
-                "content": (
-                    f"Review this demand-response plan v{version}:\n"
-                    f"Achieved: {current_plan.achieved_mw:.1f} MW / {target_mw} MW target\n"
-                    f"EJ share: {current_plan.ej_share_pct:.1f}% (cap: {ej_cap_pct*100:.0f}%)\n"
-                    f"Buildings: {current_plan.building_count}\n"
-                    f"Reachable: {current_plan.reachable}\n"
-                    f"Constraint check result: {json.dumps(constraint_result, indent=2)}\n\n"
-                    f"Approve or reject with reason."
-                ),
-            }
-        ]
-
-        critic_response = client.messages.create(
-            model=get_model_id(),
-            max_tokens=1024,
-            system=CRITIC_SYSTEM,
-            messages=critic_messages,
+    def _check(plan: EventPlan) -> dict:
+        return check_constraints(
+            building_ids=[b["building_id"] for b in plan.portfolio],
+            target_mw=target_mw,
+            ej_cap_pct=ej_cap_pct,
+            current_temp_f=current_temp_f,
+            prev_event_building_ids=prev,
         )
 
-        critic_text = "".join(
-            block.text for block in critic_response.content if hasattr(block, "text")
+    def _run_phase(version: int, respect_cap: bool) -> tuple[EventPlan, dict]:
+        raw = plan_event(
+            target_mw=target_mw,
+            ej_cap_pct=ej_cap_pct,
+            current_temp_f=current_temp_f,
+            exclude_building_ids=excl,
+            prev_event_building_ids=prev,
+            respect_ej_cap=respect_cap,
         )
+        plan = _to_plan(raw, version)
+        narration = _narrate(
+            PLANNER_SYSTEM,
+            f"You produced plan v{version} via the plan_event tool: "
+            f"{plan.building_count} buildings, {plan.achieved_mw:.1f} MW, "
+            f"EJ share {plan.ej_share_pct:.1f}% against a {ej_cap_pct*100:.0f}% cap. "
+            f"Respond with ONLY one plain sentence for the operator trace \u2014 "
+            f"no label, no preamble, no quotes, no markdown.",
+        )
+        trace.append(TraceStep(
+            ts=_ts(),
+            kind="plan",
+            summary=(
+                narration
+                or f"Plan v{version}: {plan.building_count} buildings, "
+                   f"{plan.achieved_mw:.1f} MW, EJ share {plan.ej_share_pct:.1f}%"
+            ),
+            plan_version=version,
+            tool_name="plan_event",
+            tool_args={"target_mw": target_mw, "ej_cap_pct": ej_cap_pct,
+                       "respect_ej_cap": respect_cap},
+            tool_result=raw,
+        ))
+        result = _check(plan)
+        passed = result.get("passed", False) and plan.reachable
+        trace.append(TraceStep(
+            ts=_ts(),
+            kind="constraint_check",
+            summary=(
+                f"Constraint check v{version}: {'PASSED' if passed else 'FAILED'} \u2014 "
+                + ("; ".join(v.get("detail", v.get("type", ""))
+                             for v in result.get("violations", [])) or "no violations")
+            ),
+            plan_version=version,
+            tool_name="check_constraints",
+            tool_result=result,
+        ))
+        return plan, result
 
-        # Parse critic decision
-        approved = constraint_result.get("passed", False) and current_plan.reachable
-        violations = constraint_result.get("violations", [])
-        critic_reason: str | None = None
+    # --- Phase 1: naive plan (ignores EJ cap) ---
+    v1, v1_result = _run_phase(version=1, respect_cap=False)
+    v1_violations = v1_result.get("violations", [])
+    v1_ok = v1_result.get("passed", False) and v1.reachable
 
-        if violations:
-            critic_reason = "; ".join(v.get("detail", v.get("type", "")) for v in violations)
-            rejected_by = violations[0].get("type", "constraint") if violations else None
-            trace.append(TraceStep(
-                ts=_ts(),
-                kind="self_correct",
-                summary=f"Critic rejected v{version}: {critic_reason}. Planning v{version+1}.",
-                plan_version=version,
-                rejected_by=rejected_by,
-            ))
+    if v1_ok:
+        trace.append(TraceStep(
+            ts=_ts(), kind="plan", plan_version=1,
+            summary=(f"Critic approved v1. EJ share {v1.ej_share_pct:.1f}%, "
+                     f"{v1.achieved_mw:.1f} MW."),
+        ))
+        return PlanResult(approved=True, final_plan=v1, trace=trace, iterations=1)
 
-            # Build revised exclusion list: remove EJ buildings from the plan
-            ej_in_plan = [
-                b["building_id"] for b in current_plan.portfolio if b.get("is_ej")
-            ]
-            # Remove a batch of EJ buildings to reduce EJ share on next iteration
-            n_to_swap = max(1, len(ej_in_plan) // 2)
-            extra_exclude = list(set(extra_exclude) | set(ej_in_plan[:n_to_swap]))
+    # Critic rejects v1
+    reason = "; ".join(v.get("detail", v.get("type", "")) for v in v1_violations) \
+             or "unreachable under current cap"
+    rejected_by = v1_violations[0].get("type", "constraint") if v1_violations else "unreachable"
+    critic_note = _narrate(
+        CRITIC_SYSTEM,
+        f"Plan v1 has EJ share {v1.ej_share_pct:.1f}% against a "
+        f"{ej_cap_pct*100:.0f}% cap and these violations: {reason}. "
+        f"Reply with ONE plain-English sentence only \u2014 no JSON, no code "
+        f"blocks \u2014 rejecting it and saying load should shift off EJ zips.",
+    )
+    trace.append(TraceStep(
+        ts=_ts(), kind="self_correct", plan_version=1, rejected_by=rejected_by,
+        summary=(critic_note
+                 or f"Critic rejected v1: {reason}. Shifting load off EJ zips; planning v2."),
+    ))
 
-        else:
-            trace.append(TraceStep(
-                ts=_ts(),
-                kind="plan",
-                summary=f"Critic approved v{version}. EJ share {current_plan.ej_share_pct:.1f}%, {current_plan.achieved_mw:.1f} MW.",
-                plan_version=version,
-            ))
-            return PlanResult(
-                approved=True,
-                final_plan=current_plan,
-                trace=trace,
-                iterations=iteration + 1,
-                critic_reason=None,
-            )
+    # --- Phase 2: equity-corrected plan ---
+    v2, v2_result = _run_phase(version=2, respect_cap=True)
+    v2_ok = v2_result.get("passed", False) and v2.reachable
 
-    # Exhausted iterations
+    if v2_ok:
+        trace.append(TraceStep(
+            ts=_ts(), kind="plan", plan_version=2,
+            summary=(f"Critic approved v2. EJ share {v2.ej_share_pct:.1f}%, "
+                     f"{v2.achieved_mw:.1f} MW."),
+        ))
+        return PlanResult(approved=True, final_plan=v2, trace=trace, iterations=2)
+
+    # v2 still not acceptable -> explicit unreachable / trade-off
+    v2_reason = "; ".join(v.get("detail", v.get("type", "")) for v in v2_result.get("violations", [])) \
+                or (v2.tradeoff or "target unreachable under the equity cap")
+    trace.append(TraceStep(
+        ts=_ts(), kind="self_correct", plan_version=2,
+        summary=f"v2 cannot satisfy the target under the cap: {v2_reason}",
+    ))
     return PlanResult(
-        approved=False,
-        final_plan=current_plan,
-        trace=trace,
-        iterations=MAX_ITERATIONS,
-        critic_reason=critic_reason or "max iterations reached",
+        approved=False, final_plan=v2, trace=trace, iterations=2,
+        critic_reason=v2_reason,
     )

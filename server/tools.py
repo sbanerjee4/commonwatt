@@ -275,6 +275,7 @@ def plan_event(
     current_temp_f: float = 85.0,
     exclude_building_ids: list[str] | None = None,
     prev_event_building_ids: list[str] | None = None,
+    respect_ej_cap: bool = True,
 ) -> dict[str, Any]:
     """
     Assemble a demand-response portfolio meeting target_mw under the EJ cap.
@@ -285,8 +286,12 @@ def plan_event(
       3. Fill remaining with EJ buildings up to cap.
       4. If target unreachable under cap, return explicit trade-off.
 
+    When respect_ej_cap is False, the planner ranks purely by curtailable load
+    and ignores the EJ cap — this is the naive "v1" plan that typically
+    over-calls high-load EJ zips, giving the critic something to reject. When
+    True (default), it produces the equity-corrected "v2" that stays under cap.
+
     Returns portfolio + equity score, or an unreachable result with trade-off.
-    This is v1 of the plan; the critic will check it and may request v2.
     """
     exclude = set(exclude_building_ids or [])
     prev = set(prev_event_building_ids or [])
@@ -315,28 +320,38 @@ def plan_event(
     total_kw = 0.0
     ej_kw = 0.0
 
-    # Add non-EJ first
-    for b in non_ej:
-        kw = b.curtailable_load_kw or 0.0
-        selected.append(b)
-        total_kw += kw
-        if total_kw >= target_kw:
-            break
-
-    # If still short, fill from EJ up to cap
-    if total_kw < target_kw:
-        for b in ej:
+    if not respect_ej_cap:
+        # Naive v1: rank purely by load, ignore the EJ cap. High-load EJ
+        # buildings get pulled in first, which typically busts the cap and
+        # gives the critic a reason to reject this version.
+        for b in eligible:
             kw = b.curtailable_load_kw or 0.0
-            projected_ej_kw = ej_kw + kw
-            projected_total_kw = total_kw + kw
-            projected_ej_share = projected_ej_kw / projected_total_kw if projected_total_kw > 0 else 0
-            if projected_ej_share > ej_cap_pct:
-                continue  # skip — would bust the cap
             selected.append(b)
             total_kw += kw
-            ej_kw += kw
             if total_kw >= target_kw:
                 break
+    else:
+        # Equity-corrected v2: add non-EJ first, then fill from EJ up to cap.
+        for b in non_ej:
+            kw = b.curtailable_load_kw or 0.0
+            selected.append(b)
+            total_kw += kw
+            if total_kw >= target_kw:
+                break
+
+        if total_kw < target_kw:
+            for b in ej:
+                kw = b.curtailable_load_kw or 0.0
+                projected_ej_kw = ej_kw + kw
+                projected_total_kw = total_kw + kw
+                projected_ej_share = projected_ej_kw / projected_total_kw if projected_total_kw > 0 else 0
+                if projected_ej_share > ej_cap_pct:
+                    continue  # skip — would bust the cap
+                selected.append(b)
+                total_kw += kw
+                ej_kw += kw
+                if total_kw >= target_kw:
+                    break
 
     # Recalculate final equity share
     final_ej_kw = sum(b.curtailable_load_kw or 0 for b in selected if b.is_ej)

@@ -85,6 +85,12 @@ class ChatSession:
 
     def _system_prompt(self) -> str:
         base = BUILDING_CHAT_SYSTEM
+        base += (
+            f"\n\nYou are serving the facility manager of building id "
+            f"{self.building_id!r}. Always call building_info with THIS building id "
+            f"to answer questions about 'my building' — never ask the user for their "
+            f"building id, you already have it."
+        )
         if self.event_context:
             base += (
                 f"\n\n--- LIVE EVENT CONTEXT ---\n"
