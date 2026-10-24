@@ -2,6 +2,14 @@
 
 > Keep the grid up without leaning on the same neighborhoods twice.
 
+## Demo URL
+
+https://commonwatt.vercel.app/
+
+## Video
+
+TODO
+
 ## Track
 
 Climate
@@ -116,14 +124,6 @@ Boston BERDO 2021 building emissions dataset, resource
 `43e4abc9-1fae-40d9-a02e-ff950bd0e732` on data.boston.gov (public, keyless).
 Socioeconomic weighting uses US Census ACS median household income by zip (table B19013); the map uses the US Census Geocoder for building lat/long. Program rates, capacity prices, and emissions factors are cited one-per-constant
 in `server/constants.py`.
-
-## Demo URL
-
-https://commonwatt.vercel.app/
-
-## Video
-
-TODO
 
 ## Team and Representative
 
