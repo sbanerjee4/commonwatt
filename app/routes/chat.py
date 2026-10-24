@@ -10,19 +10,20 @@ posts free text.
 
 Polling model: the SPA calls ``GET /inbox/{building_id}`` every few seconds.
 
-Demo identity is passed with ``X-User-Id`` / ``X-Role`` headers
-(``building_manager`` | ``utility``). A building session may only touch its own
-building; a ``utility`` user may read any thread and post operator messages.
+Identity comes from the session cookie via app.deps (current_user /
+require_role). A building manager may only read/post to their own building; a
+``utility`` operator may read any thread and post operator messages.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 
 from app.db import get_db
+from app.deps import current_user, require_role
 from app.routes._chat_agent import agent_reply_or_fallback, build_event_context
 from app.routes._chat_helpers import (
     call_history_for,
@@ -38,15 +39,11 @@ from notify.validation import parse_reply_body
 router = APIRouter()
 
 
-def _load_caller(db, user_id: int | None) -> User | None:
-    return db.get(User, user_id) if user_id is not None else None
-
-
-def _require_building_access(role: str, user: User | None, building_id: str) -> None:
-    """A building session may only touch its own building; utility may touch any."""
-    if role == "utility":
+def _require_building_access(user: User, building_id: str) -> None:
+    """A building manager may only touch their own building; operators may touch any."""
+    if user.role in ("utility", "operator"):
         return
-    if role == "building_manager" and user is not None and user.building_id == building_id:
+    if user.role == "building_manager" and user.building_id == building_id:
         return
     raise HTTPException(status_code=403, detail="not authorized for this building")
 
@@ -55,11 +52,9 @@ def _require_building_access(role: str, user: User | None, building_id: str) -> 
 async def get_thread(
     building_id: str,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="building_manager"),
+    user: User = Depends(current_user),
 ):
-    caller = _load_caller(db, x_user_id)
-    _require_building_access(x_role, caller, building_id)
+    _require_building_access(user, building_id)
 
     rows = db.execute(
         select(Message).where(Message.building_id == building_id).order_by(Message.id.asc())
@@ -90,11 +85,9 @@ async def unread_count(
     building_id: str,
     since: int = 0,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="building_manager"),
+    user: User = Depends(current_user),
 ):
-    caller = _load_caller(db, x_user_id)
-    _require_building_access(x_role, caller, building_id)
+    _require_building_access(user, building_id)
     count = db.execute(
         select(func.count())
         .select_from(Message)
@@ -108,11 +101,9 @@ async def building_reply(
     building_id: str,
     request: Request,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="building_manager"),
+    user: User = Depends(current_user),
 ):
-    caller = _load_caller(db, x_user_id)
-    _require_building_access(x_role, caller, building_id)
+    _require_building_access(user, building_id)
 
     payload = await request.json()
     body = (payload.get("body") or "").strip()
@@ -125,7 +116,7 @@ async def building_reply(
 
     thread = get_or_create_thread(db, event.id, building_id)
     post_message(db, event_id=event.id, building_id=building_id,
-                 sender_role="building_manager", sender_user_id=x_user_id, body=body)
+                 sender_role="building_manager", sender_user_id=user.id, body=body)
 
     # Structured decision -> replies row tied to the building's call_history.
     parsed = parse_reply_body(body)
@@ -138,7 +129,7 @@ async def building_reply(
         db.add(Reply(call_id=call.id, building_id=building_id, kind="offer", offer_kw=parsed))
         recorded = {"kind": "offer", "kw": parsed}
 
-    db.add(AuditLog(user_id=x_user_id, event_id=event.id, building_id=building_id,
+    db.add(AuditLog(user_id=user.id, event_id=event.id, building_id=building_id,
                     action="chat_building_reply",
                     detail=(recorded["kind"] if recorded else "free_text"),
                     provider="inapp"))
@@ -152,7 +143,7 @@ async def building_reply(
         agent_replied = True
         if fell_back:
             thread.needs_human = True
-        db.add(AuditLog(user_id=x_user_id, event_id=event.id, building_id=building_id,
+        db.add(AuditLog(user_id=user.id, event_id=event.id, building_id=building_id,
                         action="chat_agent_reply",
                         detail=("fallback" if fell_back else "agent"), provider="inapp"))
 
@@ -165,12 +156,9 @@ async def building_reply(
 async def request_human(
     building_id: str,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="building_manager"),
+    user: User = Depends(current_user),
 ):
-    caller = _load_caller(db, x_user_id)
-    if not (x_role == "building_manager" and caller is not None
-            and caller.building_id == building_id):
+    if not (user.role == "building_manager" and user.building_id == building_id):
         raise HTTPException(status_code=403, detail="owning building manager only")
 
     event = open_event_for_building(db, building_id)
@@ -185,7 +173,7 @@ async def request_human(
     thread.handoff_mode = "human"
     post_message(db, event_id=event.id, building_id=building_id, sender_role="system",
                  body="A human representative has been requested and will join shortly.")
-    db.add(AuditLog(user_id=x_user_id, event_id=event.id, building_id=building_id,
+    db.add(AuditLog(user_id=user.id, event_id=event.id, building_id=building_id,
                     action="chat_handoff_requested",
                     detail="manager requested a human", provider="inapp"))
     db.commit()
@@ -201,12 +189,8 @@ async def operator_message(
     building_id: str,
     request: Request,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="utility"),
+    user: User = Depends(require_role("utility")),
 ):
-    if x_role != "utility":
-        raise HTTPException(status_code=403, detail="utility operators only")
-
     payload = await request.json()
     body = (payload.get("body") or "").strip()
     if not body:
@@ -223,9 +207,9 @@ async def operator_message(
 
     thread = get_or_create_thread(db, event.id, building_id)
     post_message(db, event_id=event.id, building_id=building_id,
-                 sender_role="operator", sender_user_id=x_user_id, body=body)
+                 sender_role="operator", sender_user_id=user.id, body=body)
     thread.needs_human = False
-    db.add(AuditLog(user_id=x_user_id, event_id=event.id, building_id=building_id,
+    db.add(AuditLog(user_id=user.id, event_id=event.id, building_id=building_id,
                     action="chat_operator_message", detail="takeover", provider="inapp"))
     db.commit()
 
@@ -243,17 +227,14 @@ async def operator_message(
 async def close_thread(
     building_id: str,
     db=Depends(get_db),
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="utility"),
+    user: User = Depends(require_role("utility")),
 ):
-    if x_role != "utility":
-        raise HTTPException(status_code=403, detail="utility operators only")
     event = open_event_for_building(db, building_id)
     if event is None:
         raise HTTPException(status_code=409, detail="no open event for building")
     thread = get_or_create_thread(db, event.id, building_id)
     thread.closed_at = datetime.now(timezone.utc)
-    db.add(AuditLog(user_id=x_user_id, event_id=event.id, building_id=building_id,
+    db.add(AuditLog(user_id=user.id, event_id=event.id, building_id=building_id,
                     action="chat_thread_closed", detail=None, provider="inapp"))
     db.commit()
     return {"ok": True, "event_id": event.id, "closed": True}

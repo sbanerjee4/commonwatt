@@ -157,6 +157,16 @@ the same response from a utility route as from a route that does not exist
 outside the public allowlist (`/auth/login`, `/auth/logout`, `/auth/me`,
 `/health`) lacks a `require_role` dependency.
 
+**Pre-auth header stand-in (to be removed by task 4.3).** The chat, SMS and
+portfolio routes shipped before the auth layer existed, so they currently read
+the caller's identity from `X-User-Id` / `X-Role` request headers ("the BFF
+would normally set these from the session"). That shim is NOT the auth model —
+it trusts the client to assert its own role. Task 4.3 replaces it: once
+`current_user` / `require_role` resolve identity from the `cw_session` cookie,
+`routes/chat.py`, `routes/sms.py` and `routes/portfolio.py` must take the user
+from that dependency, and the `X-User-Id` / `X-Role` headers must no longer be
+honoured on any route.
+
 **Scoped repository pattern.** Route handlers never receive a raw SQLAlchemy
 `Session`. They receive a repository bound to the caller's scope:
 

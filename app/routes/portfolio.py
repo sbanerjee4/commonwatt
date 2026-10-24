@@ -3,8 +3,8 @@
 These were originally in bff/app.py; they are mounted here as an APIRouter so
 the single FastAPI app in app/main.py owns auth, sessions, and the portfolio
 views together. Read endpoints (map/zip/savings/recruitment) are public demo
-data. Building-scoped and operator endpoints reuse the same header-based access
-pattern as app/routes/chat.py (X-User-Id / X-Role) so the role boundary holds.
+data. Building-scoped and operator endpoints resolve identity from the session
+cookie via app.deps (current_user / require_role), not request headers.
 
 Every numeric field carries a source_id (provenance rule).
 """
@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.deps import current_user, require_role
+from db.models import User
 from server.constants import EJ_SOURCE_ID
+from server.data import INCOME_SOURCE_ID, affluence_tier_for_income, median_income_for_zip
 from server.data import buildings_by_zip, load_buildings
 from server.tools import building_info, estimate_savings, recruitment_list
 
@@ -45,6 +48,9 @@ def get_zips() -> dict[str, Any]:
                 if total_load is not None else None
             ),
             "ejStatus": "ej" if buildings[0].is_ej else "non_ej",
+            "medianIncome": buildings[0].median_income,
+            "affluenceTier": buildings[0].affluence_tier,
+            "incomeSourceId": INCOME_SOURCE_ID if buildings[0].median_income else None,
             "cumulativeCalls": 0,
             "hasGeometry": True,
         })
@@ -67,12 +73,49 @@ def get_zip_buildings(zip_code: str) -> dict[str, Any]:
             "buildingId": b.building_id,
             "address": b.address,
             "zip": b.zip,
-            "lngLat": None,
+            "lngLat": b.lng_lat,
             "propertyType": b.property_type,
             "grossAreaSf": b.gross_area_sf,
             "curtailableLoadKw": load,
+            "affluenceTier": b.affluence_tier,
+            "medianIncome": b.median_income,
+            "canAbsorb": b.can_absorb,
+            "shouldProtect": b.should_protect,
         })
     return {"zip": zip_code, "buildings": markers}
+
+
+@router.get("/portfolio/buildings")
+def get_all_building_markers() -> dict[str, Any]:
+    """All geocoded buildings as map markers, for the portfolio map.
+
+    Buildings without coordinates (failed geocoding) are returned with
+    lngLat=null so the client can list them in an orphan panel rather than
+    drop them (AC-12b).
+    """
+    markers = []
+    for b in load_buildings():
+        load = None
+        if b.curtailable_load_kw is not None:
+            load = {"value": b.curtailable_load_kw, "source_id": EJ_SOURCE_ID,
+                    "basis": b.load_basis}
+        markers.append({
+            "buildingId": b.building_id,
+            "address": b.address,
+            "zip": b.zip,
+            "lngLat": b.lng_lat,
+            "propertyType": b.property_type,
+            "grossAreaSf": b.gross_area_sf,
+            "curtailableLoadKw": load,
+            "affluenceTier": b.affluence_tier,
+            "medianIncome": b.median_income,
+            "isEj": b.is_ej,
+            "canAbsorb": b.can_absorb,
+            "shouldProtect": b.should_protect,
+        })
+    placed = sum(1 for m in markers if m["lngLat"])
+    return {"buildings": markers, "placed": placed, "total": len(markers),
+            "geocode_source_id": "census_geocoder"}
 
 
 @router.get("/portfolio/buildings/{building_id}")
@@ -108,12 +151,9 @@ class DraftRequest(BaseModel):
 @router.post("/event/draft")
 def post_event_draft(
     req: DraftRequest,
-    x_role: str = Header(default="operator"),
+    user: User = Depends(require_role("utility")),
 ) -> dict[str, Any]:
     """Run the planner/critic loop. Operator-only (matches the human-gate rule)."""
-    if x_role != "operator":
-        raise HTTPException(status_code=403, detail="operators only")
-
     from agent.planner import run_planner  # lazy: data endpoints work without Bedrock
 
     result = run_planner(
@@ -162,16 +202,16 @@ class ChatRequest(BaseModel):
 def post_building_chat(
     building_id: str,
     req: ChatRequest,
-    x_user_id: int | None = Header(default=None),
-    x_role: str = Header(default="building_manager"),
+    user: User = Depends(current_user),
 ) -> dict[str, Any]:
     """One facility-manager chat turn, scoped to this building.
 
-    A building session may only chat about its own building; operators may chat
-    about any (demo). Building-id scoping mirrors chat.py's access rule.
+    A building manager may only chat about their own building; a utility
+    operator may chat about any. Identity comes from the session cookie.
     """
-    # NOTE: BERDO building ids are strings; the auth building_id is an int FK.
-    # The frontend/session mapping between them is a known follow-up (see PR).
+    if user.role == "building_manager" and user.building_id != building_id:
+        raise HTTPException(status_code=403, detail="not authorized for this building")
+
     from agent.chat import make_session  # lazy import
 
     session = _chat_sessions.get(building_id)
