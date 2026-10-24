@@ -9,7 +9,7 @@ Climate
 ## One-line description
 
 An equity-constrained demand-response planner for Massachusetts utilities: it
-decides which buildings to ask to reduce load on a peak day, keeps the burden
+decides which buildings to ask to reduce load on a peak day, leans on the ones that can most afford it, spares lower-income neighborhoods, keeps the burden
 off the same neighborhoods, and leaves every call to a human.
 
 ## What it does
@@ -32,11 +32,11 @@ Browser SPA  ──HTTP──>  BFF (FastAPI)  ──calls──>  Commonwatt MC
                               └── Planner + Critic agents (agent/) ── Claude via Amazon Bedrock
 ```
 
-- **`server/`** — the Commonwatt MCP server: 9 deterministic, property-tested
+- **`server/`** — the Commonwatt MCP server: 11 deterministic, property-tested
   tools. No model calls inside; every number carries a `source_id`.
 - **`agent/`** — the planner/critic loop and the building chat agent (Claude via
   Amazon Bedrock).
-- **`bff/`** — a thin FastAPI backend-for-frontend the SPA talks to.
+- **`bff/`** — the single FastAPI app (app/main.py) the SPA talks to; portfolio/map/planner routes live in app/routes/portfolio.py.
 - **`fixtures/berdo.json`** — 2,472 Boston BERDO buildings, pulled once from the
   public datastore and committed so the app runs offline.
 - **`.kiro/`** — specs, steering, hooks, MCP registration, decisions log.
@@ -102,7 +102,7 @@ Read-only unless noted. Every numeric field carries a `source_id`.
 ## Tests
 
 ```
-make test       # 20 tests: 9 property-based + 11 BFF endpoint tests
+make test       # 58 tests: 16 property-based + BFF + auth/chat/SMS
 ```
 
 The suite runs without Bedrock (the two LLM endpoints are mocked). Property
@@ -114,7 +114,7 @@ shed and zero at zero, and backfill never re-adds a declined building.
 
 Boston BERDO 2021 building emissions dataset, resource
 `43e4abc9-1fae-40d9-a02e-ff950bd0e732` on data.boston.gov (public, keyless).
-Program rates, capacity prices, and emissions factors are cited one-per-constant
+Socioeconomic weighting uses US Census ACS median household income by zip (table B19013); the map uses the US Census Geocoder for building lat/long. Program rates, capacity prices, and emissions factors are cited one-per-constant
 in `server/constants.py`.
 
 ## Demo URL
