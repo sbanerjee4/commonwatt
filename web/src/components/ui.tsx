@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { BrandMark, ArrowIcon } from './icons'
+import { signOut } from '../lib/session'
 
 export function Container({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`container ${className}`.trim()}>{children}</div>
@@ -57,6 +58,13 @@ export function SignInLink({ quiet = false }: { quiet?: boolean }) {
 }
 
 export function AppHeader({ context }: { context?: string }) {
+  const navigate = useNavigate()
+
+  function onSignOut() {
+    signOut()
+    navigate('/')
+  }
+
   return (
     <header className="app-header">
       <Link className="brand" to="/" aria-label="Commonwatt home">
@@ -65,9 +73,9 @@ export function AppHeader({ context }: { context?: string }) {
       </Link>
       <div className="app-identity">
         {context && <span className="role-label">{context}</span>}
-        <Link to="/" className="text-link">
+        <button type="button" className="text-link" onClick={onSignOut}>
           Sign out
-        </Link>
+        </button>
       </div>
     </header>
   )

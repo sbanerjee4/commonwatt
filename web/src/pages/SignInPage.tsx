@@ -2,16 +2,19 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Heading } from '../components/ui'
 import { BrandMark, ArrowIcon } from '../components/icons'
+import { signIn } from '../lib/session'
 
-// NOTE: the BFF does not expose /auth/* yet (see bff/app.py), so this page is a
-// UI shell that routes by selected role. Real authentication wires in once the
-// auth endpoints land.
+// NOTE: there is no /auth/login endpoint yet. Sign-in selects one of the seeded
+// demo accounts (db/seed.py) and persists its identity, which the API client
+// then attaches as X-User-Id / X-Role on every request. Real credential auth
+// wires in once the backend login endpoint lands.
 export function SignInPage() {
   const [role, setRole] = useState<'utility' | 'facility'>('facility')
   const navigate = useNavigate()
 
   function onSubmit(event: React.FormEvent) {
     event.preventDefault()
+    signIn(role)
     navigate(role === 'utility' ? '/utility' : '/building')
   }
 

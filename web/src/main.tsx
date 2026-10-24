@@ -7,6 +7,7 @@ import { LandingPage } from './pages/LandingPage'
 import { SignInPage } from './pages/SignInPage'
 import { UtilityPage } from './pages/UtilityPage'
 import { BuildingPage } from './pages/BuildingPage'
+import { RequireRole } from './components/RequireRole'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -19,8 +20,22 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/signin" element={<SignInPage />} />
-          <Route path="/utility" element={<UtilityPage />} />
-          <Route path="/building" element={<BuildingPage />} />
+          <Route
+            path="/utility"
+            element={
+              <RequireRole role="utility">
+                <UtilityPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/building"
+            element={
+              <RequireRole role="facility">
+                <BuildingPage />
+              </RequireRole>
+            }
+          />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
