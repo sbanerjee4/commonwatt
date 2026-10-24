@@ -20,37 +20,40 @@ the simulator — those live behind the API.
 └──────────────────────────┼────────────────────────────────────┘
                            │
 ┌──────────────────────────▼────────────────────────────────────┐
-│  Web API (Node/Express or FastAPI — thin BFF)                  │
-│   • /auth/*        session cookie, role in {utility,building}  │
-│   • /buildings     geocoded building docs (read)               │
-│   • /zips          zip aggregates + geojson ref (read)         │
-│   • /graph         knowledge-graph nodes/edges (read)          │
-│   • /event/*       draft plan, re-solve, approve, trace (read  │
-│                     + approve write)                           │
-│   • /building/:id  one building's status/history/replies       │
-│   • /savings       three counters with assumptions + source id │
-│   • /recruitment, /season  city-office views                   │
+│  BFF (FastAPI + SQLAlchemy)                                     │
+│   • /auth/login           bcrypt verify, HTTP-only cookie      │
+│   • /auth/me              session state {role, buildingId?}    │
+│   • /buildings, /zips     aggregate + drill-in (read)          │
+│   • /graph                knowledge-graph nodes/edges (read)   │
+│   • /event/*              plan, re-solve, approve (calls MCP   │
+│                            tools in-process, streams trace)    │
+│   • /building/:id/*       one building's status/history/reply  │
+│   • /savings              three counters + source_id           │
+│   • /recruitment, /season city-office views                    │
 └──────────────────────────┬─────────────────────────────────────┘
-            │  auth, users, roles,             │  calls deterministic tools
-            │  building_id FK, RLS, audit_log  │
-  ┌─────────▼──────────────┐         ┌─────────▼─────────────┐     ┌──────────────────┐
-  │  Supabase (Postgres)    │         │  Commonwatt MCP        │     │  Mongo            │
-  │  users, roles,          │         │  estimate_load,        │────▶│  buildings (geo), │
-  │  building_id FK,        │         │  rank_candidates,      │     │  zips, events,    │
-  │  audit_log, RLS policy  │         │  check_constraints,    │     │  replies, season  │
-  └─────────────────────────┘         │  score_equity,         │     │  totals           │
-                                      │  plan_event, backfill, │     └──────────────────┘
-                                      │  reconcile,            │
-                                      │  estimate_savings,     │
-                                      │  recruitment_list      │
-                                      └─────────────────────────┘
+            │                          │
+            │                          │  calls MCP tools
+            │                          │  in-process
+            ├─ Postgres ────────────┐  │  (estimate_load,
+            │ (users, roles,        │  │  rank_candidates,
+            │  building_id FK,      │  │  check_constraints,
+            │  buildings, events,   │  │  score_equity,
+            │  call_history,        │  │  plan_event, etc.)
+            │  replies, trace,      │  │
+            │  audit_log)           │  │
+            │                       │  ◄──
+            └─ Commonwatt MCP ──────┘
+            │ (tools + simulator)
+            │
 ```
 
-The SPA never talks to the MCP server or Mongo directly. A thin backend-for-
-frontend (BFF) owns the session cookie, enforces the role boundary, and shapes
-MCP/Mongo results into view models. This keeps the front-end a pure renderer and
-keeps every number sourced on the server side, satisfying the provenance rule
-(AC-30): each numeric field arrives with a `source_id`.
+All state lives in one Postgres database: `users`, `roles`, `buildings` (geocoded),
+`events`, `call_history`, `replies`, `trace_steps`, `audit_log`. The BFF reads
+from Postgres, calls MCP tools in-process, and returns shaped view models to the
+SPA. Auth is a stub: three seeded demo accounts with bcrypt hashes, verified at
+`/auth/login`, which mints an HTTP-only session cookie. The SPA never talks to
+MCP or Postgres directly. Every number carries a `source_id`, satisfying the
+provenance rule (AC-30).
 
 ### Why a BFF and not direct MCP calls
 
@@ -58,38 +61,33 @@ keeps every number sourced on the server side, satisfying the provenance rule
   the server; a building user's request can never be allowed to fan out to
   other buildings' data. The BFF scopes every `/building/:id` call to the
   session's building id.
-- **Shaping.** The map needs zip aggregates joined to geojson; the graph needs
-  nodes/edges; the counters need assumptions attached. The BFF composes these
-  from tool outputs so the client stays thin.
+- **Shaping.** The map needs zip aggregates; the graph needs nodes/edges; the
+  counters need assumptions attached. The BFF composes these from tool outputs
+  and Postgres queries so the client stays thin.
 - **One MCP, two consumers.** Per the project brief the same Commonwatt MCP
   server is used by Kiro during development and by the app at runtime. The BFF
-  is the app's consumer.
+  is the app's consumer and calls MCP tools in-process.
 
-### Why Supabase for auth, Mongo for the rest
+### Why one Postgres database, not Mongo + Supabase Auth
 
-Auth and account data — `users`, roles, the `building_id` mapping, and the
-approval audit trail — live in **Supabase (Postgres)**, separate from the
-Mongo store used for buildings/zips/events/replies:
+All state (users, roles, buildings, events, call history, replies, trace,
+audit log) lives in a single Postgres schema:
 
 - **Referential integrity.** `users.building_id` is a real foreign key into
-  `buildings`; the database rejects a write that points a building user at a
-  building that doesn't exist. The same reference in Mongo would be an
-  unenforced `ObjectId`.
-- **Row-Level Security as a second line of defense.** The BFF already asserts
-  `id === session.buildingId` on every request (AC-4, AC-7). Postgres RLS
-  policies enforce that same scoping at the database layer, so the app's most
-  security-sensitive invariant doesn't rest on a single code path.
-- **Built-in auth primitives.** Password hashing and a managed `users` table
-  come with Supabase instead of being assembled from a library on top of
-  Mongo.
-- **Audit trail fits relational data.** `audit_log(user_id, event_id, action,
-  timestamp)` is a foreign-keyed, append-only row — exactly what Postgres is
-  built for.
+  `buildings`; the database rejects a write that violates this constraint.
+- **Auth is a stub.** Three seeded demo accounts (`operator`, `city`,
+  `facility_manager` tied to `building_id`) with bcrypt password hashes.
+  `/auth/login` validates the hash and mints an HTTP-only session cookie.
+  No sign-up, no password reset, no Supabase Auth service.
+- **Audit trail.** `audit_log(user_id, event_id, action, timestamp)` is
+  foreign-keyed and append-only — exactly what Postgres is built for.
+- **Demo environment.** For local dev and tests, use a Postgres container or
+  SQLite via SQLAlchemy. For the deployed demo, point DATABASE_URL at Supabase
+  Postgres. The app code is unaffected; the schema and seeded data are the same.
 
-The front-end is unaffected either way; it only ever talks to the BFF. Where
-the rest of the data (buildings, zips, events, the knowledge graph) ultimately
-lives is a separate, still-open decision — this section covers auth/account
-data only.
+The front-end is unaffected by where Postgres lives; it only ever talks to the
+BFF. Demo credentials are seeded at setup and documented in README so judges can
+log in from a clean clone.
 
 ## Components
 
@@ -106,6 +104,16 @@ data only.
 | State | React Query cache + small local UI state (Zustand) | Avoids a heavy global store; most state is server state |
 | Charts/counters | Lightweight (e.g. visx or hand-rolled SVG) | Three counters + a season bar chart; no need for a large charting dep |
 | Styling | CSS modules or Tailwind | Theme tokens for light/dark; respects `prefers-reduced-motion` (AC-31) |
+
+### Back-end stack
+
+| Concern | Choice | Why |
+| --- | --- | --- |
+| Framework | FastAPI | Fast, async, supports streaming; calls MCP tools and simulator in-process |
+| Database | Postgres (local or Supabase) | All state in one schema; foreign keys, audit trail, seeded demo users |
+| ORM | SQLAlchemy | Declarative models, RLS-ready migrations, works with both local Postgres and Supabase |
+| Auth | bcrypt + HTTP-only cookies | Stub: three seeded demo accounts, validated at login, role in session |
+| Session | server-side (Postgres table) | HTTP-only, SameSite; role and buildingId stored in cookie, verified on each request |
 
 The map uses **choropleth as the primary layer** with **building-marker
 drill-in** (confirmed decision): statewide view shows zips colored by metric;
@@ -185,31 +193,46 @@ A single page with panels:
 
 ## Data Sources
 
-The front-end reads only from the BFF; the BFF composes from the Commonwatt MCP
-tools and the Mongo store. The building dataset is the Boston BERDO datastore
-resource `43e4abc9-1fae-40d9-a02e-ff950bd0e732` (2,472 buildings), which supplies
-per-building `Address`, `Zip`, `Property_Type`, `Gross_Area_sf`, and partial
-energy fields (`Site_EUI_kBtuft2`, `per_Electricity`) — present on roughly half
-the rows — plus sparse parcel geometry (`shape_wkt`, ~8% of rows, not used).
-Addresses are geocoded to points at ingest (a backend concern) and stored in
-Mongo; the front-end consumes the geocoded buildings. MA zip-code boundary
-GeoJSON ships as a static asset (public MassGIS / TIGER zip polygons); the BFF
-supplies per-zip values only, not geometry, so the map is fast and the geometry
-is cacheable.
+All state lives in a single Postgres database:
 
-User accounts, roles, the building-to-user mapping, and the approval audit
-trail live separately in Supabase (Postgres), not Mongo — see **Auth and role
-boundary** below for why.
+- **`users`** — id, email, role (`operator` / `city` / `facility_manager`),
+  `building_id` (FK to `buildings`, nullable for operator/city), password_hash.
+  Three seeded demo accounts; demo credentials in README.
+- **`buildings`** — id, Address, Zip, Property_Type, Gross_Area_sf, Site_EUI_kBtuft2,
+  per_Electricity, lngLat (geocoded point). 2,472 buildings from Boston BERDO
+  datastore resource `43e4abc9-1fae-40d9-a02e-ff950bd0e732`, ingest geocoded
+  to points.
+- **`zips`** — zip, buildingCount, curtailableLoadKw, ejStatus, cumulativeCalls,
+  computed from aggregates over buildings and events.
+- **`events`** — id, windowLabel, targetMw, capPct, status (`draft` / `approved` /
+  `rejected`), version (1, 2, etc.), timestamp.
+- **`call_history`** — id, eventId, buildingId, kwRequested, timestamp.
+- **`replies`** — id, callId, buildingId, reply (`yes` / `no` / numeric offer),
+  timestamp.
+- **`trace_steps`** — id, eventId, ts, kind (`forecast` / `plan` / `constraint_check` /
+  `self_correct`), summary, planVersion, toolName, rejectedBy.
+- **`audit_log`** — id, userId, eventId, action (`approved` / `rejected` / `resolved`),
+  timestamp.
+
+For local dev and tests, use a Postgres container or SQLite via SQLAlchemy. For
+the deployed demo, DATABASE_URL points at Supabase Postgres. The schema and
+seeded data are identical across both environments.
+
+The BFF calls Commonwatt MCP tools in-process (estimate_load, rank_candidates,
+check_constraints, score_equity, plan_event, estimate_savings, recruitment_list)
+and reads from Postgres to compose view models for the front-end.
 
 ## Agent Loop
 
-The front-end does not run the agent loop; it visualizes it. The agent's steps
-(forecast → plan v1 → constraint check → self-correct → plan v2) arrive as a
-read-only trace from `/event/trace` and render in `TracePanel` (AC-15–AC-17).
-Operator interaction with the loop is mediated by the operator card: the target
-and equity-cap sliders request a re-solved plan from `/event/resolve`, and the
-**Approve / Edit list / Reject** gate posts the human decision to `/event/*`.
-Every event stays behind this human gate — the front-end never auto-approves.
+The front-end does not run the agent loop; it visualizes it. The BFF runs the
+loop by calling Commonwatt MCP tools in-process (forecast → plan v1 → constraint
+check → self-correct → plan v2). Each step is logged to `trace_steps` in Postgres,
+and the trace arrives as a read-only stream from `/event/trace` and renders in
+`TracePanel` (AC-15–AC-17). Operator interaction with the loop is mediated by
+the operator card: the target and equity-cap sliders request a re-solved plan
+from `/event/resolve`, and the **Approve / Edit list / Reject** gate posts the
+human decision to `/event/approve` or `/event/reject`. Every event stays behind
+this human gate — the front-end never auto-approves.
 
 ## Tools / MCP
 
@@ -324,27 +347,25 @@ provenance is enforced at the edge.
 
 ### Auth and role boundary
 
-- **Store:** Supabase (Postgres) holds `users` (id, role, `building_id` FK,
-  password hash) — not Mongo. `building_id` is a foreign key into `buildings`,
-  so a user row can never reference a nonexistent building.
-- Session is an HTTP-only, SameSite cookie set by `/auth/login`; the SPA holds
-  no token and never talks to Supabase directly. The BFF verifies credentials
-  against Supabase and mints its own cookie; `/auth/me` returns `{ role,
-  buildingId? }`.
-- `RequireAuth` guards `/utility` and `/building`. A building session hitting
-  `/utility` is redirected and the BFF returns 403 for any utility-only endpoint
-  (AC-7).
-- Every `/building/:id` endpoint asserts `id === session.buildingId` for
-  building sessions (AC-4, AC-27); utility sessions may read any building.
-- **Defense in depth:** Postgres Row-Level Security policies on `users` and
-  `audit_log` scope queries by `building_id` at the database layer, so a bug in
-  the BFF's own check above can't leak another building's data — AC-4/AC-7 is
-  enforced twice, not once.
-- Approvals (AC-21) and building replies (AC-29) write an `audit_log` row
-  (`user_id`, `event_id`, `action`, `timestamp`) in Supabase, giving a
-  relationally-consistent audit trail tied back to a real user and event.
-- For the demo, credentials and enrollment are seeded/simulated and labeled as
-  such (AC-32); the auth mechanism is real so the boundary is demonstrable.
+- **Postgres schema.** `users` holds id, email, role, `building_id` (FK), and
+  password_hash. Demo credentials seeded at setup; three accounts (operator,
+  city, facility_manager tied to building_id). No sign-up, no password reset.
+- **Session.** HTTP-only, SameSite cookie set by `/auth/login`. The BFF verifies
+  credentials against Postgres bcrypt hash, stores session record in `sessions`
+  table, and mints the cookie. The SPA holds no token.
+- **Role boundary (AC-4, AC-7).** The BFF asserts role on every request:
+  - `operator` and `city` can read `/zips`, `/buildings`, `/utility/*` (shared
+    views).
+  - `facility_manager` can read only `/building/:id/*` scoped to their own
+    building_id; the BFF asserts `id === session.buildingId` and returns 403
+    otherwise.
+  - Utility-only endpoints (`/recruitment`, `/season`, `/graph`) are 403 for
+    building sessions.
+- **Audit trail.** Approvals (AC-21) and building replies (AC-29) write
+  `audit_log(user_id, event_id, action, timestamp)` in Postgres, tying
+  decisions and replies back to real users.
+- **Demo.** Credentials and enrollment are seeded and labeled simulated (AC-32);
+  the auth mechanism is real so the boundary is demonstrable from a clean clone.
 
 ### Accessibility and motion
 

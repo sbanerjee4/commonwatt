@@ -1,150 +1,211 @@
-# Tasks — Front-end: Visualization Map & Dashboards
+# Tasks — CommonWatt: Full Stack (BFF + Front-end)
 
 Ordered, checkable implementation plan. Each task names the acceptance criteria
-(AC-*) it satisfies. Front-end work assumes the BFF contracts in `design.md`;
-where the live BFF is not ready, build against fixtures that mirror those
-contracts so the UI is testable in isolation.
+(AC-*) it satisfies. Backend tasks set up the FastAPI BFF with Postgres; frontend
+tasks build React components against the BFF contracts. Auth is part of Task 1.
 
-## 0. Project scaffold
+## Task 1: Auth + BFF setup
 
-- [ ] **0.1** Scaffold the SPA: Vite + React 18 + TypeScript in `web/`, with
-      React Router, TanStack Query, Zustand, and ESLint/Prettier.
-- [ ] **0.2** Wire `make setup` / `make demo` / `make test` to the `web/` build,
-      dev server (bound to `127.0.0.1`), and Vitest run.
-- [ ] **0.3** Add the typed API client and zod schemas for every contract in
-      `design.md` (`ZipAggregate`, `BuildingMarker`, `EventPlan`, `TraceStep`,
-      `SavingsCounter`); add fixtures mirroring them under `fixtures/`.
-- [ ] **0.4** Add the "no `source_id` → do not render a number" guard as a shared
-      render helper, with a unit test. (AC-30)
+- [ ] **1.1** Initialize FastAPI project: `app/`, `requirements.txt` (FastAPI,
+      SQLAlchemy, psycopg2, bcrypt, alembic for migrations), basic `app.py`.
+- [ ] **1.2** Create Postgres schema (alembic migrations): `users`, `buildings`,
+      `events`, `call_history`, `replies`, `trace_steps`, `audit_log`, `sessions`.
+- [ ] **1.3** Implement `/auth/login` POST: validate bcrypt hash against `users`
+      table, set HTTP-only SameSite session cookie (session stored in `sessions`
+      table).
+- [ ] **1.4** Implement `/auth/me` GET: return `{role, buildingId?}` from session
+      cookie.
+- [ ] **1.5** Implement `/auth/logout` POST: clear session cookie.
+- [ ] **1.6** Create FastAPI role-check dependencies: `require_operator`,
+      `require_utility`, `require_facility_manager`.
+- [ ] **1.7** Seed three demo users: operator (no building_id), city office
+      (no building_id), facility_manager (building_id = 1). Generate bcrypt
+      hashes at setup time.
+- [ ] **1.8** Document demo credentials in `README.md` (email, password, role).
+- [ ] **1.9** Verify: `curl -X POST localhost:8000/auth/login ...` sets session
+      cookie, `/auth/me` returns role, role guards work.
 
-## 1. Public page & routing
+## Task 2: Data model and seed
 
-- [ ] **1.1** Build `PublicLanding` at `/`: tagline, promo copy (voluntary,
-      paid, equity-constrained, human-approved), Sign in button; no auth, no
-      fetch. (AC-1)
-- [ ] **1.2** Set up routes: `/`, `/signin`, guarded `/utility`, `/building`.
-- [ ] **1.3** Test: `/` renders without auth and exposes the Sign in entry
-      point. (AC-1, AC-2)
+- [ ] **2.1** Define SQLAlchemy models: User, Building, Event, CallHistory,
+      Reply, TraceStep, AuditLog, Session.
+- [ ] **2.2** Ingest Boston BERDO 2,472 buildings: address, zip, property_type,
+      gross_area_sf, site_eui_kBtuft2, per_electricity, and geocoded (lng, lat).
+      Mark `simulated=false`.
+- [ ] **2.3** Geocode buildings at ingest (third-party or mock geocoder); log
+      buildings with `lngLat = null` (AC-12b).
+- [ ] **2.4** Create seed script: 3–4 sample events with different target MW /
+      equity cap combinations.
+- [ ] **2.5** Create seed script: demo call history for 2–3 buildings across 1–2
+      events. Mark `simulated=true`.
+- [ ] **2.6** Create seed script: demo replies (YES/NO/numeric offers). Mark
+      `simulated=true`.
+- [ ] **2.7** Verify: `SELECT COUNT(*) FROM buildings;` returns 2472,
+      geocoding logs show count of failures.
 
-## 2. Authentication & role boundary
+## Task 3: Public page + auth UI
 
-- [ ] **2.1** Build `SignInForm` with a Utility/Building role toggle; POST
-      `/auth/login`. (AC-2)
-- [ ] **2.2** Route by role on success: utility → `/utility`, building →
-      `/building` scoped to the session building id. (AC-3, AC-4)
-- [ ] **2.3** Show an inline error and stay on `/signin` on invalid credentials.
-      (AC-5)
-- [ ] **2.4** Build `RequireAuth`: redirect unauthenticated users to `/signin`;
-      block a building session from `/utility`. (AC-6, AC-7)
-- [ ] **2.5** Build sign-out: end session, return to `/`. (AC-8)
-- [ ] **2.6** Tests: guard redirects, building-session 403 on utility routes,
-      sign-out clears session. (AC-6, AC-7, AC-8)
+- [ ] **3.1** Scaffold React SPA: Vite + React 18 + TypeScript, React Router,
+      TanStack Query, Zustand, in `web/`.
+- [ ] **3.2** Build `PublicLanding` at `/`: tagline, promo (voluntary, paid,
+      equity-constrained, human-approved), Sign In button. No auth, static. (AC-1)
+- [ ] **3.3** Build `SignInForm`: role toggle (Utility / Building), email +
+      password fields, POST to `/auth/login`. (AC-2)
+- [ ] **3.4** On successful login, redirect by role: utility → `/utility`,
+      building → `/building`. (AC-3, AC-4)
+- [ ] **3.5** On invalid credentials, show inline error, stay on form. (AC-5)
+- [ ] **3.6** Build `RequireAuth` route guard: fetch `/auth/me` on app load,
+      redirect unauthenticated to `/signin`, block building user from `/utility`
+      (403). (AC-6, AC-7)
+- [ ] **3.7** Build sign-out: POST `/auth/logout`, clear local session state,
+      redirect to `/`. (AC-8)
+- [ ] **3.8** Add API client + zod schemas for all BFF contracts (`ZipAggregate`,
+      `BuildingMarker`, `EventPlan`, `TraceStep`, `SavingsCounter`).
+- [ ] **3.9** Tests (Vitest + React Testing Library): guard redirects, role
+      check, sign-out clears state.
 
-## 3. Portfolio map — aggregate layer
+## Task 4: Utility dashboard — map core
 
-- [ ] **3.1** Add the MA zip-boundary GeoJSON static asset and load it into a
-      MapLibre `PortfolioMap`.
-- [ ] **3.2** Render the zip choropleth from `/zips`, colored by the default
-      metric; show `MapLegend`. (AC-9)
-- [ ] **3.3** Add `MetricSelect` (curtailable load / EJ status / cumulative
-      calls); recolor + update legend without refetch. (AC-10)
-- [ ] **3.4** Zip click → side panel with building count, curtailable load, EJ
-      status, cumulative calls. (AC-11)
-- [ ] **3.5** `OrphanPanel`: list zips present in data but missing geometry.
-      (AC-12)
-- [ ] **3.6** Tests (Playwright): choropleth renders, metric change recolors,
-      zip click populates the panel. (AC-9, AC-10, AC-11, AC-12)
+- [ ] **4.1** Implement GET `/zips` (BFF): query aggregates (zip, buildingCount,
+      curtailableLoadKw, ejStatus, cumulativeCalls, hasGeometry), return JSON.
+      Every numeric field includes `source_id`. (AC-9, AC-30)
+- [ ] **4.2** Implement GET `/zips/:zip/buildings` (BFF): query buildings for
+      a zip, return markers with address, lngLat, propertyType, curtailableLoadKw
+      (`basis: "metered" | "estimated_from_type"`), `simulated` flag. (AC-11b)
+- [ ] **4.3** Build `PortfolioMap` component: MapLibre choropleth from MA zip
+      GeoJSON, colored by the default metric; render `MapLegend`. Load `/zips`
+      on mount. (AC-9)
+- [ ] **4.4** Add `MetricSelect` (curtailable load / EJ status / cumulative
+      calls); recolor from the loaded data without a refetch. (AC-10)
+- [ ] **4.5** Zip click → fetch `/zips/:zip/buildings`, render marker layer,
+      show side panel with building count, load, EJ, calls. (AC-11)
+- [ ] **4.6** Marker click → `BuildingPopover`: address, type, gross area, EUI,
+      curtailable load. (AC-11b)
+- [ ] **4.7** "Load estimated from type" or "load unknown" badge for buildings
+      with missing EUI/electricity; never fabricate a number. (AC-11c)
+- [ ] **4.8** Implement `OrphanPanel`: list zips with no geometry, list buildings
+      with `lngLat = null`. (AC-12, AC-12b)
+- [ ] **4.9** Tests (Playwright): `/utility` loads, choropleth renders, metric
+      change recolors, zip click shows markers, orphan panel surfaces. (AC-9–AC-12)
 
-## 4. Portfolio map — building drill-in
+## Task 5: Knowledge graph + trace panel
 
-- [ ] **4.1** Zip drill-in → fetch `/zips/:zip/buildings`, render a marker layer
-      at each `lngLat`. (AC-11b)
-- [ ] **4.2** `BuildingPopover` on marker click: address, type, gross area, EUI,
-      estimated curtailable load. (AC-11b)
-- [ ] **4.3** "Load estimated from type / unknown" badge for buildings with no
-      EUI/electricity data; never fabricate a number. (AC-11c)
-- [ ] **4.4** Buildings with `lngLat: null` listed in the zip's building panel,
-      not dropped. (AC-12b)
-- [ ] **4.5** Tests: marker render, badge logic for missing load, ungeocodable
-      building appears in the panel. (AC-11b, AC-11c, AC-12b)
-
-## 5. Knowledge graph
-
-- [ ] **5.1** Build `KnowledgeGraph` (Cytoscape) from `/graph`: nodes for zip,
-      building, EJ block group, utility, event; edges for their relationships.
-      (AC-13)
-- [ ] **5.2** Node select → highlight direct neighbors + show attributes.
+- [ ] **5.1** Implement GET `/graph` (BFF): query nodes (zips, buildings, events,
+      EJ block groups, utilities) and edges, return as JSON. Each node includes
+      `type` and attributes. (AC-13)
+- [ ] **5.2** Implement GET `/event/trace` (BFF): query `trace_steps` for an
+      event, ordered by ts, return as JSON: {ts, kind, summary, planVersion,
+      toolName, rejectedBy}. (AC-15, AC-16, AC-17)
+- [ ] **5.3** Build `KnowledgeGraph` component: Cytoscape canvas from `/graph`,
+      render nodes/edges. (AC-13)
+- [ ] **5.4** Node select → highlight direct neighbors, show node attributes.
       (AC-14)
-- [ ] **5.3** Tests: node/edge render, neighbor highlight on select. (AC-13,
-      AC-14)
+- [ ] **5.5** Build `TracePanel` component: ordered list from `/event/trace`,
+      show timestamp + summary + tool name. Keep all versions visible, mark the
+      constraint that caused revisions. (AC-15, AC-16, AC-17)
+- [ ] **5.6** Tests: node/edge render, neighbor highlight, trace order/retention.
+      (AC-13–AC-17)
 
-## 6. Agent trace panel
+## Task 6: Operator card + re-solve flow
 
-- [ ] **6.1** Build `TracePanel` from `/event/trace`: ordered steps with
-      timestamp + one-line summary (forecast → v1 → constraint check →
-      self-correct → v2). (AC-15)
-- [ ] **6.2** Keep every plan version visible; mark the constraint that caused
-      each revision. (AC-16)
-- [ ] **6.3** Render any MCP tool name in a step verbatim. (AC-17)
-- [ ] **6.4** Tests: ordered render, multi-version retention, tool-name
-      passthrough. (AC-15, AC-16, AC-17)
+- [ ] **6.1** Implement GET `/event/draft` (BFF): query the current event,
+      calculate plan {version, windowLabel, targetMw, capPct, buildingCount,
+      ejSharePct, reachable}, return JSON. (AC-18, AC-30)
+- [ ] **6.2** Implement POST `/event/resolve?target=X&cap=Y` (BFF):
+      - Call MCP tools in-process (rank_candidates, check_constraints,
+        score_equity, plan_event) to generate a new plan.
+      - Log trace steps to `trace_steps` table.
+      - On critic rejection, record `rejectedBy` in trace and call planner again.
+      - Return updated EventPlan {version, ..., reachable, tradeoff?}.
+      - If unreachable, include explicit trade-off string ("35% cap → 31 MW;
+        45% → 40 MW"). (AC-19, AC-20)
+- [ ] **6.3** Implement POST `/event/approve` (BFF, require_operator): write
+      audit_log row, set event status to `approved`, return 200. (AC-21)
+- [ ] **6.4** Implement POST `/event/reject` (BFF, require_operator): write
+      audit_log row, set event status to `rejected`, return 200.
+- [ ] **6.5** Build `OperatorCard` component: fetch `/event/draft` on mount,
+      show window, target, building count, EJ share. (AC-18)
+- [ ] **6.6** Add `TargetSlider` + `EquityCapSlider`: on drag, debounce and POST
+      `/event/resolve?target=&cap=`, update card + `EquityGauge` + map recolor
+      without page reload. (AC-19)
+- [ ] **6.7** If reachable=false, show the tradeoff string; never silent
+      shortfall. (AC-20)
+- [ ] **6.8** Add Approve / Reject buttons; POST to BFF, show confirmation
+      (append `AuditLine` in UI). (AC-21)
+- [ ] **6.9** If trace includes a critic rejection, animate the map load shift
+      from rejected zips to replacements, gated by `prefers-reduced-motion`.
+      (AC-22, AC-31)
+- [ ] **6.10** Tests (Playwright): slider re-solve, unreachable trade-off,
+      Approve appends audit, map animation respects motion preference. (AC-19–AC-22)
 
-## 7. Operator card & re-solve
+## Task 7: Building account + reply flow
 
-- [ ] **7.1** Build `OperatorCard`: window, MW target, building count, EJ share;
-      Approve / Edit list / Reject buttons. (AC-18)
-- [ ] **7.2** `TargetSlider` + `EquityCapSlider` → `/event/resolve?target=&cap=`;
-      update card, `EquityGauge`, and map without a page reload. (AC-19)
-- [ ] **7.3** Unreachable result → render the explicit trade-off string, never a
-      silent shortfall. (AC-20)
-- [ ] **7.4** Approve → POST `/event/approve`, append `AuditLine`. (AC-21)
-- [ ] **7.5** Critic-rejection re-solve → animate map load shift from rejected to
-      replacement zips, gated by `prefers-reduced-motion`. (AC-22, AC-31)
-- [ ] **7.6** Tests (Playwright): slider re-solve updates all panels, unreachable
-      shows trade-off, Approve appends audit line. (AC-19, AC-20, AC-21)
+- [ ] **7.1** Implement GET `/building/:id` (BFF, role check: facility_manager →
+      own building only): query building, return {buildingId, address, zip,
+      enrolledCapacity, recentLoad, isAskedToday, simulated}. (AC-27, AC-30)
+- [ ] **7.2** Implement GET `/building/:id/history` (BFF, role check): query
+      call_history + replies + payments for this building, return {events: [{eventId,
+      windowLabel, replyValue, payment, timestamp, simulated}], totalPayments}.
+      (AC-27)
+- [ ] **7.3** Implement POST `/building/:id/reply` (BFF, role check: facility_manager
+      → own building only): store reply (yes/no/numeric) in `replies` table, write
+      audit_log, return 200. (AC-29)
+- [ ] **7.4** Build `BuildingStatus` component: show capacity, recent load,
+      "asked today?" badge. Fetch `/building/:id` on mount. (AC-27)
+- [ ] **7.5** Build `BuildingHistory` component: table of past events + total
+      earnings. Fetch `/building/:id/history`. (AC-27)
+- [ ] **7.6** Build `LiveAsk` component (conditionally shown if event live +
+      building asked): kW requested, reason ("why you"), estimated payment,
+      YES / NO / numeric-offer reply control. (AC-28)
+- [ ] **7.7** Reply submit → POST `/building/:id/reply`, reflect the submitted
+      reply in UI (show "waiting for confirmation" then hide LiveAsk). (AC-29)
+- [ ] **7.8** Tests: building-scoped data only, role check blocks cross-building
+      access, reply submit works. (AC-27–AC-29)
 
-## 8. Savings counters & city-office reports
+## Task 8: Counters, recruitment, season + polish
 
-- [ ] **8.1** Build `SavingsCounters` from `/savings`: three counters, each with
-      an **estimated** label, assumptions tooltip, and `source_id`. (AC-23)
-- [ ] **8.2** All counters read zero when nothing is shed. (AC-24)
-- [ ] **8.3** Build `RecruitmentList` from `/recruitment`: high-load, unenrolled
-      buildings in EJ zips. (AC-25)
-- [ ] **8.4** Build `SeasonReport` from `/season` with a cap-on / cap-off toggle
-      that redraws cumulative-calls-by-zip. (AC-26)
-- [ ] **8.5** Tests: estimated label + source present, zero-at-zero, cap toggle
-      redraw. (AC-23, AC-24, AC-26)
+- [ ] **8.1** Implement GET `/savings` (BFF): calculate three counters (paid to
+      buildings, avoided system cost, CO₂ avoided) using MCP estimate_savings tool,
+      return {key, valueLabel, estimated, assumptions, source_id}. (AC-23, AC-30)
+- [ ] **8.2** If no load shed, all counters read zero. (AC-24)
+- [ ] **8.3** Implement GET `/recruitment` (BFF, require_utility): query high-load,
+      unenrolled buildings in EJ zips, return list. (AC-25)
+- [ ] **8.4** Implement GET `/season?cap=on|off` (BFF, require_utility): query
+      cumulative calls by zip for the given cap setting, return for chart. (AC-26)
+- [ ] **8.5** Build `SavingsCounters` component: three counters with **estimated**
+      label, assumptions tooltip, source_id shown. (AC-23)
+- [ ] **8.6** Build `RecruitmentList` component (city office view): fetch
+      `/recruitment`, render table. (AC-25)
+- [ ] **8.7** Build `SeasonReport` component: fetch `/season?cap=on`, render bar
+      chart, add cap-on / cap-off toggle that refetches. (AC-26)
+- [ ] **8.8** Implement `prefers-reduced-motion` across the app: disable map
+      tween, counter roll-ups; always show static end state. (AC-31)
+- [ ] **8.9** Map uses colorblind-safe palette; every metric has a legend +
+      click-through numbers. No color-only signal. (AC-10)
+- [ ] **8.10** Label all simulated data (enrollment, replies, meter reads) with
+      a `simulated` badge. (AC-32)
+- [ ] **8.11** Accessibility: axe pass on all screens, keyboard navigation for
+      sign-in form, map, operator card. (AC-31)
+- [ ] **8.12** Unit tests: source_id validation (AC-30), "load estimated from
+      type" badge (AC-11c), "no source → no render" guard.
+- [ ] **8.13** Tests (Playwright): end-to-end sign-in → utility → map → approval
+      → building account → reply. (All ACs)
 
-## 9. Building account
+## Task 9: Demo wiring & deployment
 
-- [ ] **9.1** Build `BuildingStatus`: enrolled capacity, recent load, "asked
-      today?" flag, scoped to the session building. (AC-27)
-- [ ] **9.2** Build `BuildingHistory`: past events + total payments for this
-      building. (AC-27)
-- [ ] **9.3** Build `LiveAsk` (shown only on a live event asking this building):
-      kW requested, reason, estimated payment, YES / NO / numeric-offer reply.
-      (AC-28)
-- [ ] **9.4** Submit reply → POST `/building/:id/reply`, reflect the submitted
-      reply in the UI. (AC-29)
-- [ ] **9.5** Tests: building-scoped data only, live-ask reply states and submit.
-      (AC-27, AC-28, AC-29)
-
-## 10. Cross-cutting: provenance, motion, simulated labels
-
-- [ ] **10.1** Audit every numeric surface for a `source_id`; fail the build on a
-      number with no source. (AC-30)
-- [ ] **10.2** Respect `prefers-reduced-motion` across map tween and counter
-      roll-ups; always show the static end state. (AC-31)
-- [ ] **10.3** Label simulated data (enrollment, replies, meter reads) as
-      simulated across the UI. (AC-32)
-- [ ] **10.4** Accessibility: axe pass per screen, keyboard-only walkthrough of
-      sign-in and the operator card, colorblind-safe map scales with legend.
-
-## 11. Demo wiring
-
-- [ ] **11.1** Seed the fixtures/demo data path so `make demo` serves the public
-      page, both logins, and the heat-day replay against the operator card.
-- [ ] **11.2** Verify the public demo URL loads the public page with no auth and
-      that both roles sign in. (AC-1, AC-3, AC-4)
-- [ ] **11.3** Update `README.md` so `make demo` and the demo URL are documented
-      (keeps the pre-commit `make demo` check green).
+- [ ] **9.1** Update `Makefile`: `make setup` creates Postgres, runs migrations,
+      seeds demo data; `make demo` runs BFF on :8000 + React dev server on :3000;
+      `make test` runs pytest + Vitest + Playwright.
+- [ ] **9.2** Update `README.md`: describe `make setup`, `make demo`, link to demo
+      URL, document demo credentials (operator/city/facility_manager emails +
+      passwords), explain one-building enrollment for facility_manager. (Pre-commit
+      `make demo` check passes.)
+- [ ] **9.3** Verify `make demo` runs from a clean clone: Postgres starts, migrations
+      run, demo data seeds, BFF + React start, `/` loads public page, both logins
+      work. (AC-1, AC-3, AC-4)
+- [ ] **9.4** Deploy: point DATABASE_URL to Supabase Postgres, run `make setup`,
+      build React (`npm run build`), serve static + FastAPI (e.g., Heroku, Render,
+      or Docker).
+- [ ] **9.5** Verify deployed demo: public page, both logins, full end-to-end
+      workflow (approve event, building reply). All routes scoped correctly by role.
+      (All ACs)
