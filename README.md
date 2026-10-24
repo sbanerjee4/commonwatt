@@ -133,12 +133,6 @@ Nicole Zheng
 
 ---
 
-## SMS Notifications (Twilio)
-
-Outbound asks to building managers and alerts to operators, plus an inbound
-reply webhook. Two providers behind one interface: **simulated** (default — no
-network, used by tests and `make demo`) and **twilio** (real send).
-
 ### Setup
 
 ```bash
