@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: kiro-dir-present
+        name: kiro-dir-present
+        entry: bash -c 'if [ ! -d .kiro ]; then echo ".kiro directory is missing"; exit 1; fi; if grep -qxE "\.kiro/?" .gitignore 2>/dev/null; then echo ".gitignore must not ignore .kiro"; exit 1; fi; if ! grep -q "make demo" README.md 2>/dev/null; then echo "README.md must reference make demo"; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
