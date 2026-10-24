@@ -13,6 +13,44 @@ const trace: Array<[string, string, string, string]> = [
   ['14:02:21', 'Plan v2', '40 MW target met across 108 available buildings.', 'plan.compose'],
 ]
 
+// One or two sentences describing what the proposal changes, for at-a-glance
+// explainability. Derived from the trace's self-correction.
+const proposalSummary =
+  'This proposal asks 108 buildings to reduce 40 MW during the 5–7 PM peak. ' +
+  'An initial 126-building plan was rebalanced to broaden participation after two groups were asked too often.'
+
+// --- Reasoning knowledge graph: the causes that led to the final proposal. ---
+// Each node is a factor or decision; edges point cause -> effect, ending at the
+// final proposal. Positions are on a 0–100 grid (x = left→right flow).
+type GraphNode = {
+  id: string
+  label: string
+  kind: 'signal' | 'check' | 'decision' | 'proposal'
+  x: number
+  y: number
+  anchor?: 'start' | 'middle' | 'end'
+}
+type GraphEdge = { from: string; to: string; label?: string }
+
+const graphNodes: GraphNode[] = [
+  { id: 'forecast', label: 'Peak risk 5–7 PM', kind: 'signal', x: 8, y: 20, anchor: 'start' },
+  { id: 'target', label: 'Target 40 MW', kind: 'signal', x: 8, y: 70, anchor: 'start' },
+  { id: 'v1', label: 'Plan v1 · 126 bldgs', kind: 'decision', x: 36, y: 20 },
+  { id: 'check', label: 'Repeated-request check', kind: 'check', x: 36, y: 70 },
+  { id: 'rebalance', label: 'Rebalance 18 bldgs', kind: 'decision', x: 58, y: 48, anchor: 'end' },
+  { id: 'proposal', label: 'Proposal · 40 MW, 108 bldgs', kind: 'proposal', x: 92, y: 45, anchor: 'end' },
+]
+
+const graphEdges: GraphEdge[] = [
+  { from: 'forecast', to: 'v1', label: 'drives' },
+  { from: 'target', to: 'v1', label: 'sizes' },
+  { from: 'v1', to: 'check', label: 'validated by' },
+  { from: 'check', to: 'rebalance', label: 'flags fairness' },
+  { from: 'v1', to: 'rebalance', label: 'revised' },
+  { from: 'rebalance', to: 'proposal', label: 'yields' },
+  { from: 'target', to: 'proposal', label: 'met' },
+]
+
 function MapPanel() {
   const zips = useQuery({ queryKey: ['zips'], queryFn: () => apiGet<ZipsResponse>('/zips') })
   const [selectedZip, setSelectedZip] = useState<string | null>(null)
@@ -191,7 +229,81 @@ function RecruitmentPanel() {
   )
 }
 
+function ReasoningGraph() {
+  const [active, setActive] = useState<string | null>(null)
+  const node = (id: string) => graphNodes.find((n) => n.id === id)!
+  const connected = (id: string) =>
+    graphEdges.some((e) => (e.from === id || e.to === id) && (e.from === active || e.to === active))
+  const edgeActive = (e: GraphEdge) => active !== null && (e.from === active || e.to === active)
+  const activeNode = active ? node(active) : null
+
+  return (
+    <div className="reasoning-graph">
+      <svg viewBox="-6 2 112 92" role="img" aria-label="Reasoning knowledge graph" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+          </marker>
+        </defs>
+        {graphEdges.map((e, i) => {
+          const a = node(e.from)
+          const b = node(e.to)
+          return (
+            <g key={i} className={`edge ${edgeActive(e) ? 'edge-active' : ''}`}>
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} markerEnd="url(#arrow)" />
+              {edgeActive(e) && e.label && (
+                <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 1.5} className="edge-label">
+                  {e.label}
+                </text>
+              )}
+            </g>
+          )
+        })}
+        {graphNodes.map((n) => {
+          const isActive = active === n.id
+          const dim = active !== null && !isActive && !connected(n.id)
+          return (
+            <g
+              key={n.id}
+              className={`gnode kind-${n.kind} ${isActive ? 'gnode-active' : ''} ${dim ? 'gnode-dim' : ''}`}
+              onMouseEnter={() => setActive(n.id)}
+              onMouseLeave={() => setActive(null)}
+              onClick={() => setActive((cur) => (cur === n.id ? null : n.id))}
+              tabIndex={0}
+              onFocus={() => setActive(n.id)}
+              role="button"
+              aria-pressed={isActive}
+            >
+              <circle cx={n.x} cy={n.y} r={3.4} />
+              <text
+                x={n.anchor === 'start' ? n.x - 3.4 : n.anchor === 'end' ? n.x + 3.4 : n.x}
+                y={n.y + 6.5}
+                textAnchor={n.anchor ?? 'middle'}
+                className="gnode-label"
+              >
+                {n.label}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <p className="graph-hint">
+        {activeNode
+          ? `${activeNode.label} — ${activeNode.kind}. Highlighted links show what it influenced.`
+          : 'Hover or tap a node to trace how each cause fed into the final proposal.'}
+      </p>
+      <ul className="graph-legend">
+        <li><i className="kind-signal" /> Signal</li>
+        <li><i className="kind-check" /> Constraint check</li>
+        <li><i className="kind-decision" /> Decision</li>
+        <li><i className="kind-proposal" /> Proposal</li>
+      </ul>
+    </div>
+  )
+}
+
 export function UtilityPage() {
+  const [showReasoning, setShowReasoning] = useState(false)
   return (
     <div className="workspace">
       <AppHeader context="Utility operator" />
@@ -207,9 +319,10 @@ export function UtilityPage() {
           <MapPanel />
           <Panel title="Operator approval" className="operator-panel" tools={<Tag tone="attention">Agent recommendation</Tag>}>
             <p className="agent-origin">
-              The planning agent prepared this event proposal. Nothing is sent to facilities until an
+              The planning agent prepared this draft proposal. Nothing is sent to facilities until an
               operator approves it.
             </p>
+            <p className="proposal-summary">{proposalSummary}</p>
             <div className="event-facts">
               <div>
                 <span>Event window</span>
@@ -235,33 +348,61 @@ export function UtilityPage() {
               <input type="range" min={20} max={60} defaultValue={40} />
             </label>
             <div className="action-row">
-              <button className="ui-button primary">Approve</button>
-              <button className="ui-button secondary">Edit list</button>
+              <button className="ui-button primary">Draft proposal</button>
+              <button className="ui-button secondary">Approve</button>
               <button className="ui-button ghost">Reject</button>
             </div>
           </Panel>
-          <Panel title="Planning agent" className="agent-panel" tools={<Tag>Ready for review</Tag>}>
-            <div className="agent-evidence">
-              <details open>
-                <summary>
-                  <span>Agent trace</span>
-                  <small>5 steps · all versions retained</small>
-                </summary>
-                <ol className="trace-list">
-                  {trace.map(([time, title, copy, tool], index) => (
-                    <li className={index === 2 ? 'revision' : ''} key={time}>
-                      <time>{time}</time>
-                      <div>
-                        <strong>{title}</strong>
-                        {index === 2 && <Tag tone="attention">Revision trigger</Tag>}
-                        <p>{copy}</p>
-                      </div>
-                      <code>{tool}</code>
-                    </li>
-                  ))}
-                </ol>
-              </details>
-            </div>
+          <Panel
+            title="Planning agent"
+            className="agent-panel"
+            tools={
+              <button
+                type="button"
+                className="ui-button ghost reasoning-toggle"
+                aria-expanded={showReasoning}
+                onClick={() => setShowReasoning((v) => !v)}
+              >
+                {showReasoning ? 'Hide reasoning' : 'Show reasoning'}
+              </button>
+            }
+          >
+            {!showReasoning && (
+              <p className="caption reasoning-collapsed-hint">
+                The agent retained every step and the causes behind this proposal.
+                Select <b>Show reasoning</b> to inspect the trace and the reasoning graph.
+              </p>
+            )}
+            {showReasoning && (
+              <div className="agent-evidence">
+                <div className="reasoning-graph-wrap">
+                  <div className="panel-subhead">
+                    <span>Reasoning graph</span>
+                    <small>causes → final proposal</small>
+                  </div>
+                  <ReasoningGraph />
+                </div>
+                <details open>
+                  <summary>
+                    <span>Agent trace</span>
+                    <small>5 steps · all versions retained</small>
+                  </summary>
+                  <ol className="trace-list">
+                    {trace.map(([time, title, copy, tool], index) => (
+                      <li className={index === 2 ? 'revision' : ''} key={time}>
+                        <time>{time}</time>
+                        <div>
+                          <strong>{title}</strong>
+                          {index === 2 && <Tag tone="attention">Revision trigger</Tag>}
+                          <p>{copy}</p>
+                        </div>
+                        <code>{tool}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              </div>
+            )}
           </Panel>
           <SeasonPanel />
           <RecruitmentPanel />
