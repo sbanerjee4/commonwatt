@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.routes import auth, chat, portfolio, push
+from app.routes import admin, auth, chat, portfolio, push
 
 
 @asynccontextmanager
@@ -37,6 +37,7 @@ app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(push.router)
 app.include_router(portfolio.router)
+app.include_router(admin.router)
 
 
 @app.get("/health")
