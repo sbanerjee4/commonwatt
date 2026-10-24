@@ -9,8 +9,48 @@ Climate
 ## One-line description
 
 An equity-constrained demand-response planner for Massachusetts utilities: it
-decides which buildings to ask to reduce load on a peak day, keeps the burden
-off the same neighborhoods, and leaves every call to a human.
+decides which buildings to ask to reduce load on a peak day, leans on the ones
+that can most afford it, spares lower-income neighborhoods, and leaves every
+call to a human.
+
+## Built with Kiro
+
+Commonwatt was built end-to-end with **Kiro**, and it shaped how the whole
+project came together. We went spec-first: the requirements, design, and tasks
+were committed to `.kiro/specs/` **before** a line of code, and every feature
+traces back to that spec. Kiro steering files (`safety.md`, `provenance.md`,
+`stack.md`) acted as guardrails the agent never crossed — every user-facing
+number carries a source id, and no message ever says cut or disconnect because
+the steering forbade it.
+
+The heart of the app is the **Commonwatt MCP server** — the same deterministic,
+property-tested tool server that Kiro used during development is the one the
+running app calls at runtime. Agent hooks ran our property tests on every save,
+so a broken equity invariant was caught the instant it appeared. We crystallized
+the data-wrangling workflow into a reusable Kiro skill. In short: spec-driven
+development, MCP, steering, agent hooks, and property-based testing, all the way
+through. We loved building with Kiro.
+
+## Stack
+
+| Layer | Tech |
+| ----- | ---- |
+| Front-end | React 18, TypeScript, Vite, TanStack Query, MapLibre GL |
+| API | FastAPI (single app), Pydantic |
+| Agents | Claude via Amazon Bedrock (planner, critic, building chat) |
+| Tools | Commonwatt MCP server (FastMCP), 11 deterministic tools |
+| Data | SQLite / Postgres, committed public fixtures (BERDO, Census ACS, geocodes) |
+| Testing | pytest + Hypothesis (property-based), 58 tests |
+| Built with | **Kiro** — spec-driven dev, MCP, steering, agent hooks, PBT, skills |
+| Deploy | Render (backend), Vercel (front-end) |
+
+## Demo URL
+
+https://commonwatt.vercel.app/
+
+## Video
+
+TODO
 
 ## What it does
 
@@ -32,11 +72,11 @@ Browser SPA  ──HTTP──>  BFF (FastAPI)  ──calls──>  Commonwatt MC
                               └── Planner + Critic agents (agent/) ── Claude via Amazon Bedrock
 ```
 
-- **`server/`** — the Commonwatt MCP server: 9 deterministic, property-tested
+- **`server/`** — the Commonwatt MCP server: 11 deterministic, property-tested
   tools. No model calls inside; every number carries a `source_id`.
 - **`agent/`** — the planner/critic loop and the building chat agent (Claude via
   Amazon Bedrock).
-- **`bff/`** — a thin FastAPI backend-for-frontend the SPA talks to.
+- **`bff/`** — the single FastAPI app (app/main.py) the SPA talks to; portfolio/map/planner routes live in app/routes/portfolio.py.
 - **`fixtures/berdo.json`** — 2,472 Boston BERDO buildings, pulled once from the
   public datastore and committed so the app runs offline.
 - **`.kiro/`** — specs, steering, hooks, MCP registration, decisions log.
@@ -102,7 +142,7 @@ Read-only unless noted. Every numeric field carries a `source_id`.
 ## Tests
 
 ```
-make test       # 20 tests: 9 property-based + 11 BFF endpoint tests
+make test       # 58 tests: 16 property-based + BFF + auth/chat/SMS
 ```
 
 The suite runs without Bedrock (the two LLM endpoints are mocked). Property
@@ -114,28 +154,18 @@ shed and zero at zero, and backfill never re-adds a declined building.
 
 Boston BERDO 2021 building emissions dataset, resource
 `43e4abc9-1fae-40d9-a02e-ff950bd0e732` on data.boston.gov (public, keyless).
-Program rates, capacity prices, and emissions factors are cited one-per-constant
+Socioeconomic weighting uses US Census ACS median household income by zip (table B19013); the map uses the US Census Geocoder for building lat/long. Program rates, capacity prices, and emissions factors are cited one-per-constant
 in `server/constants.py`.
-
-## Demo URL
-
-TODO
-
-## Video
-
-TODO
 
 ## Team and Representative
 
-TODO
+Sanchali Banerjee
+
+Sophie Cheung
+
+Nicole Zheng
 
 ---
-
-## SMS Notifications (Twilio)
-
-Outbound asks to building managers and alerts to operators, plus an inbound
-reply webhook. Two providers behind one interface: **simulated** (default — no
-network, used by tests and `make demo`) and **twilio** (real send).
 
 ### Setup
 

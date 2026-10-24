@@ -4,13 +4,14 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from '../lib/api'
 import type { AllBuildingsResponse, MapBuilding } from '../lib/types'
+import { siteTypeColor, siteTypeFor } from '../lib/grouping'
 
-type GroupBy = 'equity' | 'ej' | 'load'
+type GroupBy = 'equity' | 'site' | 'load'
 
 const BOSTON_CENTER: [number, number] = [-71.057, 42.335]
 
 function colorFor(b: MapBuilding, group: GroupBy): string {
-  if (group === 'ej') return b.isEj ? '#17a398' : '#2563eb'
+  if (group === 'site') return siteTypeColor(siteTypeFor(b.propertyType))
   if (group === 'load') {
     const kw = b.curtailableLoadKw?.value ?? 0
     return kw > 2000 ? '#e63946' : kw > 500 ? '#f4a261' : '#2563eb'
@@ -54,7 +55,7 @@ export function BuildingMap() {
         layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
       },
       center: BOSTON_CENTER,
-      zoom: 11,
+      zoom: 12.5,
     })
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     const done = () => { loadedRef.current = true; setTick((t) => t + 1) }
@@ -126,7 +127,7 @@ export function BuildingMap() {
           Group by
           <select value={group} onChange={(e) => setGroup(e.target.value as GroupBy)}>
             <option value="equity">Equity (income)</option>
-            <option value="ej">EJ status</option>
+            <option value="site">Site type</option>
             <option value="load">Available load</option>
           </select>
         </label>
@@ -146,11 +147,15 @@ export function BuildingMap() {
             <span><i style={{ background: '#17a398' }} /> Lower income — protect</span>
           </>
         )}
-        {group === 'ej' && (
+        {group === 'site' && (
           <>
-            <strong>Environmental Justice status</strong>
-            <span><i style={{ background: '#17a398' }} /> EJ zip — protect</span>
-            <span><i style={{ background: '#2563eb' }} /> Non-EJ</span>
+            <strong>Site type</strong>
+            <span><i style={{ background: siteTypeColor('Office') }} /> Office</span>
+            <span><i style={{ background: siteTypeColor('Industrial / Plant') }} /> Industrial / Plant</span>
+            <span><i style={{ background: siteTypeColor('Warehouse') }} /> Warehouse</span>
+            <span><i style={{ background: siteTypeColor('Retail') }} /> Retail</span>
+            <span><i style={{ background: siteTypeColor('Residential') }} /> Residential</span>
+            <span><i style={{ background: siteTypeColor('Other') }} /> Other</span>
           </>
         )}
         {group === 'load' && (
