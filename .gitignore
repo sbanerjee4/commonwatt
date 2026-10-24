@@ -46,3 +46,14 @@ build/
 .env
 .env.local
 .DS_Store
+
+# Secrets — never commit
+*.pdf
+key*
+*secret*
+*credentials*
+.env.*
+!.env.example
+
+# Local SQLite database (default DATABASE_URL)
+commonwatt.db

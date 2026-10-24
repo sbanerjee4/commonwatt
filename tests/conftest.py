@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from db.models import Base, Building, Event, EventBuilding, User, Utility
+from notify.schema import Base, Building, Event, EventBuilding, User, Utility
 
 
 def _fresh_session() -> Session:
@@ -64,3 +64,10 @@ def make_building(db, **kw):
     db.add(b)
     db.commit()
     return b
+
+
+# Hypothesis profile shared by all property tests.
+from hypothesis import settings  # noqa: E402
+
+settings.register_profile("default", max_examples=100)
+settings.load_profile("default")

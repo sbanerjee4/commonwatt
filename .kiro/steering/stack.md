@@ -5,23 +5,55 @@ inclusion: always
 # Stack and conventions
 
 ## Language and tooling
-- Use Python 3.12, FastMCP, pytest, Hypothesis.
-- Use React + TypeScript + MapLibre for the UI; SQLite for state.
+- **Frontend:** React 18 + TypeScript, Vite, React Router, TanStack Query, MapLibre GL JS
+- **Backend:** FastAPI (Python 3.12) + SQLAlchemy ORM
+- **Database:** Postgres (psycopg2 or asyncpg); SQLite via SQLAlchemy for local dev/test
+- **Testing:** pytest (backend), Vitest + React Testing Library (frontend), Playwright (E2E)
+- **Auth:** bcrypt for password hashing; HTTP-only session cookies
 
 ## Project layout
-- Put the server in mcp/, planner and critic in agent/, the simulator in sim/.
-- Put the UI in web/, seeded data in fixtures/, Hypothesis tests in tests/properties/.
+- Backend: `app/` (FastAPI routes), `db/` (SQLAlchemy models, migrations), `server/` (MCP tools), `agent/` (planner/critic + LLM), `bff/` (BFF API)
+- Frontend: `web/` (React app), `public/` (static assets)
+- Seeded data: `fixtures/` (SQL dumps or Python seed scripts)
+- Tests: `tests/` (backend + integration), `web/tests/` (frontend)
 
 ## Testing
-- Keep every MCP tool deterministic and pure given its inputs; no model calls inside tools.
-- Give every new tool a property-based test before wiring it to the agent.
+- Keep every MCP tool deterministic and pure given its inputs
+- Property-based tests in `tests/properties/` for dispatch math (Hypothesis)
+- Frontend unit tests use mocked BFF responses (fixtures)
+- E2E tests run against a live seeded Postgres + BFF
 
 ## Running
-- Keep make setup, make test, make demo working; they are the only entry points.
+- `make setup` — create Postgres, seed demo users (3 accounts), run migrations
+- `make test` — pytest + Vitest + Playwright
+- `make demo` — start FastAPI on :8000, React dev server on :3000
+
+## Database
+- **`users`** (id, email, role, building_id FK, password_hash, created_at)
+- **`buildings`** (id, address, zip, property_type, gross_area_sf, site_eui, per_electricity, lng, lat, simulated)
+- **`events`** (id, window_label, target_mw, cap_pct, status, version, created_at)
+- **`call_history`** (id, event_id, building_id, kw_requested, timestamp, simulated)
+- **`replies`** (id, call_id, building_id, reply_value, timestamp, simulated)
+- **`trace_steps`** (id, event_id, ts, kind, summary, plan_version, tool_name, rejected_by)
+- **`audit_log`** (id, user_id, event_id, action, timestamp)
+
+## Auth flow
+- Three seeded demo users: operator (can see all), city office (can see all), facility_manager (scoped to building_id)
+- `/auth/login` validates bcrypt hash, stores session in `sessions` table, sets HTTP-only cookie
+- Role checks via FastAPI dependencies: `@app.get("/utility/...", dependencies=[Depends(require_operator)])`
+- Demo credentials in README
+
+## Provenance
+- Every number in the response carries `source_id` or `{ value, source_id, basis }`
+- Frontend refuses to render a number without source_id (AC-30)
 
 ## Geography
-- Use zip-level geography only; never place a building at a street address.
+- Use the zip-code choropleth as the primary aggregate layer; the equity and burden story is zip-level.
+- Drill into a zip to plot its buildings as markers at their geocoded address points (AC-11b).
+- Geocoding each address to a point is a backend concern; the front-end consumes already-geocoded buildings.
+- List zips missing geometry and buildings that fail geocoding in a side panel; never silently drop them (AC-12, AC-12b).
 
 ## Style
-- Write trace events as JSON lines: ts, step, tool, args, result_summary, version.
-- Use Conventional Commits; never commit with failing tests.
+- Trace events logged to `trace_steps` table as rows: event_id, ts, kind, summary, tool_name, version
+- Conventional Commits; never commit with failing tests
+- TypeScript strict mode; Python type hints required
