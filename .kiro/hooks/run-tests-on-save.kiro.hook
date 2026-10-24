@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "name": "Run tests on save",
+  "description": "When a tool, agent, or BFF Python file is saved, run the property-based and BFF test suite so a broken invariant (e.g. an EJ-cap or savings-monotonicity violation) is caught immediately.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "server/**/*.py",
+      "agent/**/*.py",
+      "bff/**/*.py",
+      "tests/**/*.py"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A Python file in the Commonwatt backend was just saved. Run `PYTHONPATH=. python3 -m pytest tests/ -q` from the repo root. If any test fails, summarize which invariant or endpoint broke and propose the smallest fix. Do not change code unless asked."
+  }
+}

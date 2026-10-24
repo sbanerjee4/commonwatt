@@ -22,6 +22,9 @@ from server.constants import (
 
 FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "berdo.json"
 
+# Max plausible Site EUI (kBtu/ft2). Above this is a BERDO data error.
+MAX_PLAUSIBLE_EUI = 1000.0
+
 # Zips classified as Environmental Justice (EJ) in Massachusetts.
 # Source: MassGIS EJ block groups crosswalked to zip codes.
 # This is the subset of Boston BERDO zips that overlap EJ block groups.
@@ -105,7 +108,14 @@ def _estimate_load(b: Building) -> tuple[float | None, Literal["metered", "estim
     2. estimated_from_type: gross_area × type-based kW/1000sqft factor
     3. unknown: not enough data
     """
-    if b.site_eui_kbtuft2 and b.per_electricity and b.gross_area_sf:
+    # Guard against BERDO data-entry errors: a plausible Site EUI tops out
+    # around 1000 kBtu/ft2 even for energy-intensive buildings. Values above
+    # that are garbage (e.g. 50000) and would produce absurd MW estimates, so
+    # we ignore the metered path and fall back to type-based estimation.
+    eui_plausible = (
+        b.site_eui_kbtuft2 is not None and 0 < b.site_eui_kbtuft2 <= MAX_PLAUSIBLE_EUI
+    )
+    if eui_plausible and b.per_electricity and b.gross_area_sf:
         annual_kbtu = b.site_eui_kbtuft2 * b.gross_area_sf
         annual_kwh = annual_kbtu * b.per_electricity / 3.412  # kBTU to kWh
         avg_kw = annual_kwh / 8760
