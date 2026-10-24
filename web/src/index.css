@@ -522,3 +522,62 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 .conversations-thread { display: grid; gap: var(--space-3); }
 .chat-banner { padding: var(--space-2) var(--space-4); }
 .chat-composer textarea { min-width: 0; min-height: 3rem; padding: var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); resize: vertical; }
+
+/* --- Proposal summary + reasoning graph (operator page) --- */
+.proposal-summary {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-accent-soft);
+  color: var(--color-ink);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.agent-tools { display: flex; align-items: center; gap: 0.5rem; }
+.reasoning-toggle { font-size: var(--text-sm); }
+.reasoning-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+.reasoning-collapsed-hint { margin: 0; }
+.reasoning-graph-wrap { margin-bottom: 1rem; }
+
+.panel-subhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  color: var(--color-ink);
+}
+.panel-subhead small { color: var(--color-muted); font-size: var(--text-xs); }
+
+.reasoning-graph svg {
+  width: 100%;
+  height: auto;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+}
+.reasoning-graph .edge line { stroke: var(--color-line); stroke-width: 0.5; color: var(--color-line); }
+.reasoning-graph .edge-active line { stroke: var(--color-primary); color: var(--color-primary); stroke-width: 0.9; }
+.reasoning-graph .edge-label { fill: var(--color-primary); font-size: 2.1px; font-family: var(--font-body); text-anchor: middle; }
+.reasoning-graph .gnode { cursor: pointer; outline: none; }
+.reasoning-graph .gnode circle { stroke: var(--color-surface); stroke-width: 0.6; transition: r 0.1s ease; }
+.reasoning-graph .gnode-label { fill: var(--color-ink); font-size: 2.3px; font-family: var(--font-body); }
+.reasoning-graph .kind-signal circle { fill: var(--color-accent); }
+.reasoning-graph .kind-check circle { fill: var(--color-warning); }
+.reasoning-graph .kind-decision circle { fill: var(--color-primary); }
+.reasoning-graph .kind-proposal circle { fill: var(--color-pink); }
+.reasoning-graph .gnode-active circle { stroke: var(--color-ink); stroke-width: 1; }
+
+.graph-hint { margin: 0.5rem 0 0.25rem; font-size: var(--text-xs); color: var(--color-muted); }
+.graph-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0; padding: 0; list-style: none; font-size: var(--text-xs); color: var(--color-muted); }
+.graph-legend li { display: flex; align-items: center; gap: 0.3rem; }
+.graph-legend i { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
+.graph-legend i.kind-signal { background: var(--color-accent); }
+.graph-legend i.kind-check { background: var(--color-warning); }
+.graph-legend i.kind-decision { background: var(--color-primary); }
+.graph-legend i.kind-proposal { background: var(--color-pink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-graph .gnode circle { transition: none; }
+}
