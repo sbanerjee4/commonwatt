@@ -154,45 +154,45 @@ This plan breaks down the SMS notifications feature into discrete implementation
     - _Requirements: 1.3, 1.4, 1.5, 1.6, 1.7, 16.1, 16.2, 17.1_
 
 - [ ] 6. Implement inbound webhook (POST /sms/inbound)
-  - [ ] 6.1 Create FastAPI route for webhook POST /sms/inbound
+  - [x] 6.1 Create FastAPI route for webhook POST /sms/inbound
     - Create route handler: async def inbound_webhook(request: Request, db_session)
     - Extract From, Body, MessageSid, X-Twilio-Signature from request
     - Validate signature; reject (403) if invalid
     - _Requirements: 6.1, 6.2, 6.3_
   
-  - [ ] 6.2 Implement inbound phone lookup and registration check
+  - [x] 6.2 Implement inbound phone lookup and registration check
     - Normalize From field to E.164
     - Query user by phone; if not found, send "not registered" SMS and log audit_log
     - _Requirements: 7.2, 7.3_
   
-  - [ ] 6.3 Implement reply parsing and kW counter extraction
+  - [x] 6.3 Implement reply parsing and kW counter extraction
     - Call parse_reply_body(Body)
     - Extract kind (yes/no) or kW counter value
     - _Requirements: 7.4, 7.5, 7.6, 7.7, 7.9_
   
-  - [ ] 6.4 Implement STOP/START opt-out/opt-in handling
+  - [x] 6.4 Implement STOP/START opt-out/opt-in handling
     - If STOP: set user.sms_opted_out = true, send confirmation SMS, write audit_log
     - If START: set user.sms_opted_out = false, send confirmation SMS, write audit_log
     - Update and audit in single transaction
     - _Requirements: 9.1, 9.2, 9.4, 9.5_
   
-  - [ ] 6.5 Implement replies persistence for YES/NO/kW responses
+  - [x] 6.5 Implement replies persistence for YES/NO/kW responses
     - Query user.building_id
     - Query events where building_id in event.buildings, status=approved, closed_at IS NULL
     - If event found: write replies row (building_id, event_id, kind, kw), write audit_log, send "Got it" SMS
     - If no event found: send "No active event" SMS and log audit_log
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
   
-  - [ ] 6.6 Implement unrecognized body handling
+  - [x] 6.6 Implement unrecognized body handling
     - If Body doesn't match any recognized pattern: send "Didn't catch that..." SMS and log audit_log
     - _Requirements: 7.9_
   
-  - [ ] 6.7 Implement TwiML response generation
+  - [x] 6.7 Implement TwiML response generation
     - Generate valid TwiML XML responses for all reply types
     - Return HTTP 200 with TwiML body (never raise; Twilio retries on non-2xx)
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8_
   
-  - [ ]* 6.8 Write integration tests for inbound webhook
+  - [x]* 6.8 Write integration tests for inbound webhook
     - Test valid signature, registered user, YES reply → writes replies row
     - Test invalid signature → 403 rejection
     - Test unregistered phone → "not registered" SMS
@@ -334,13 +334,13 @@ This plan breaks down the SMS notifications feature into discrete implementation
     - _Requirements: All_
 
 - [ ] 13. Update README and documentation
-  - [ ] 13.1 Add SMS configuration section to README
+  - [x] 13.1 Add SMS configuration section to README
     - Document environment variables: SMS_PROVIDER, SMS_DEMO_MODE, SMS_DEMO_ALLOWLIST, TWILIO_*, SMS_WEBHOOK_URL
     - Document template types: building_ask, operator_draft_ready, operator_backfill, operator_unreachable
     - Document safety rules: forbidden language exclusion, opt-out mechanism
     - _Requirements: Overview_
   
-  - [ ] 13.2 Document API and MCP tool usage
+  - [x] 13.2 Document API and MCP tool usage
     - Document send_sms(user_id, template, params, event_id) function interface
     - Document inbound webhook endpoint (POST /sms/inbound, expected headers/body, TwiML response)
     - Document error scenarios and audit trail
