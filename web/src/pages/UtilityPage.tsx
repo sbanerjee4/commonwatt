@@ -200,7 +200,6 @@ function OperatorAndAgent() {
               <button className="ui-button primary" onClick={() => setApproved(true)}>
                 Approve
               </button>
-              <button className="ui-button secondary">Edit list</button>
               <button className="ui-button ghost" onClick={() => draft.reset()}>
                 Reject
               </button>
