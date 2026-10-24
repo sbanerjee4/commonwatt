@@ -12,15 +12,15 @@ The project spec was committed before implementation under
 `.kiro/specs/project/` (`requirements.md`, `design.md`, `tasks.md`). The LLM
 backend was built against that spec: the BFF view-model contracts in
 `design.md` (ZipAggregate, BuildingMarker, EventPlan, TraceStep,
-SavingsCounter) are implemented in `bff/app.py`, and the equity/safety rules in
+SavingsCounter) are implemented in `app/routes/portfolio.py`, and the equity/safety rules in
 the spec are enforced by `server/tools.py`.
 
-Evidence: `git log` on branch `nicole-llm`; spec files predate the code commits.
+Evidence: `git log`; the spec files were committed before the implementation commits.
 
 ## Agent hooks
 
 `.kiro/hooks/run-tests-on-save.kiro.hook` runs the property-based + BFF test
-suite whenever a file under `server/`, `agent/`, `bff/`, or `tests/` is saved,
+suite whenever a file under `server/`, `agent/`, `app/`, or `tests/` is saved,
 so a broken invariant (EJ cap, savings monotonicity, etc.) is caught the moment
 it is introduced.
 
@@ -43,9 +43,9 @@ Evidence: chat transcript (Shore Plaza East reply uses "reduce", never "cut");
 
 ## MCP
 
-The Commonwatt MCP server (`server/tools.py`, FastMCP) exposes 9 deterministic
+The Commonwatt MCP server (`server/tools.py`, FastMCP) exposes 11 deterministic
 tools: estimate_load, rank_candidates, check_constraints, score_equity,
-plan_event, backfill, estimate_savings, recruitment_list, building_info. It is
+plan_event, backfill, estimate_savings, recruitment_list, building_info, score_socioeconomic, local_conditions. It is
 registered in `.kiro/settings/mcp.json` for use during development, and the same
 tools are called by the app at runtime through the BFF and the planner loop.
 
@@ -59,12 +59,33 @@ Hypothesis: portfolio >= target or an explicit "unreachable" (never silently
 short), EJ share <= cap on every plan, savings monotonic in MW shed and zero at
 zero, every savings counter carries a source_id, backfill never re-adds a
 declined building, and protected facilities are excluded above the heat
-threshold. 9 property tests + 11 BFF tests, all green.
+threshold. 16 property tests plus BFF, auth, chat, and SMS tests: 58 total, all green.
 
-Evidence: `make test` -> 20 passed.
+Evidence: `make test` -> 58 passed.
 
 ## Kiro powers
 
 TODO (team: list the bundled powers used and what each saved)
 
 Evidence: TODO (screenshot path)
+
+## Demo script (for the 2:30 video)
+
+A reliable end-to-end run that shows the whole story:
+
+1. **Utility dashboard** (`/utility`): the Boston map with ~2,289 building
+   circles. Switch "Group by" to **Equity (income)** — amber downtown
+   (high-income, asked first), teal in Roxbury / Dorchester / Mattapan
+   (low-income, protected). Click a circle to show its real data (address,
+   income tier, curtailable load, EJ flag).
+2. **Draft an event**: set a target on the operator card and hit **Draft
+   event**. The agent trace shows plan v1 over-calling the EJ cap, the critic
+   rejecting it, and the corrected v2 that shifts load to commercial /
+   higher-income buildings — then **Approve**.
+3. **Facility manager** (`/building`): open the chat and ask "how much could we
+   reduce?" — the assistant answers from the building's real metered data.
+4. **Kiro cut**: the committed spec, a hook firing, the property tests passing
+   (`make test` -> 58), and the Commonwatt MCP server in both Kiro and the app.
+
+Headless fallback if the UI is flaky on the day: `make demo` prints the full
+v1-rejected -> v2-approved equity trace in the terminal.
