@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.db import init_db
-from app.routes import chat, sms
+from app.routes import chat, push, sms
 
 
 @asynccontextmanager
@@ -19,3 +19,4 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="CommonWatt SMS", lifespan=lifespan)
 app.include_router(sms.router)
 app.include_router(chat.router)
+app.include_router(push.router)

@@ -168,3 +168,20 @@ class AuditLog(Base):
     reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class PushSubscription(Base):
+    """A browser Web Push subscription for one user.
+
+    Stores the endpoint and keys the browser hands back after the user allows
+    notifications. Free: delivery is the browser's own push service, no Twilio.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String, unique=True)
+    p256dh: Mapped[str] = mapped_column(String)
+    auth: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

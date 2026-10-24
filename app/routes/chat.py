@@ -15,7 +15,7 @@ own building; an operator may post to any thread for the demo utility.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db import get_db
 from db.models import AuditLog, Building, Event, Message, Reply, User
@@ -68,6 +68,52 @@ async def get_thread(
             for m in rows
         ],
     }
+
+
+@router.get("/inbox/{building_id}/unread", tags=["chat"])
+async def unread_count(
+    building_id: int,
+    since: int = 0,
+    db=Depends(get_db),
+    x_user_id: int | None = Header(default=None),
+    x_role: str = Header(default="building_manager"),
+):
+    """Count messages in this building's thread with id > `since`.
+
+    The client tracks the highest message id it has shown and passes it as
+    `since`; the result drives the unread badge. Stateless — no per-user read
+    marker table for the demo.
+    """
+    caller = _load_caller(db, x_user_id)
+    _require_building_access(x_role, caller, building_id)
+    count = db.execute(
+        select(func.count())
+        .select_from(Message)
+        .where(Message.building_id == building_id, Message.id > since)
+    ).scalar_one()
+    return {"building_id": building_id, "since": since, "unread": count}
+
+
+@router.post("/inbox/{building_id}/close", tags=["chat"])
+async def close_thread(
+    building_id: int,
+    db=Depends(get_db),
+    x_user_id: int | None = Header(default=None),
+    x_role: str = Header(default="operator"),
+):
+    """Operator closes the building's open event thread. After this, replies
+    are refused (no active event) and the ask is considered settled."""
+    if x_role != "operator":
+        raise HTTPException(status_code=403, detail="operators only")
+    event = _open_event_for_building(db, building_id)
+    if event is None:
+        raise HTTPException(status_code=409, detail="no open event for building")
+    from datetime import datetime, timezone
+    event.closed_at = datetime.now(timezone.utc)
+    db.add(AuditLog(user_id=x_user_id, event_id=event.id,
+                    action="chat_thread_closed", reason=None, provider="inapp"))
+    db.commit()
+    return {"ok": True, "event_id": event.id, "closed": True}
 
 
 def _open_event_for_building(db, building_id: int):
@@ -162,4 +208,13 @@ async def operator_message(
                     action="chat_operator_message", reason="takeover",
                     provider="inapp"))
     db.commit()
+
+    # Nudge the building manager (free; no-op without push subscription/keys).
+    mgr = db.execute(
+        select(User).where(User.building_id == building_id,
+                           User.role == "building_manager")
+    ).scalars().first()
+    if mgr is not None:
+        from notify.push import notify_user
+        notify_user(db, mgr.id, "CommonWatt", "Your operator sent a message.")
     return {"ok": True}
