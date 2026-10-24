@@ -128,7 +128,9 @@ in `server/constants.py`.
 ## Team and Representative
 
 Sanchali Banerjee
+
 Sophie Cheung
+
 Nicole Zheng
 
 ---
