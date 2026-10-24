@@ -31,18 +31,19 @@ the simulator — those live behind the API.
 │   • /savings       three counters with assumptions + source id │
 │   • /recruitment, /season  city-office views                   │
 └──────────────────────────┬─────────────────────────────────────┘
-                           │  calls deterministic tools
-                ┌──────────▼───────────┐     ┌──────────────────┐
-                │  Commonwatt MCP       │     │  Mongo            │
-                │  estimate_load,       │────▶│  buildings (geo), │
-                │  rank_candidates,     │     │  zips, events,    │
-                │  check_constraints,   │     │  replies, season  │
-                │  score_equity,        │     │  totals, users    │
-                │  plan_event, backfill,│     └──────────────────┘
-                │  reconcile,           │
-                │  estimate_savings,    │
-                │  recruitment_list     │
-                └───────────────────────┘
+            │  auth, users, roles,             │  calls deterministic tools
+            │  building_id FK, RLS, audit_log  │
+  ┌─────────▼──────────────┐         ┌─────────▼─────────────┐     ┌──────────────────┐
+  │  Supabase (Postgres)    │         │  Commonwatt MCP        │     │  Mongo            │
+  │  users, roles,          │         │  estimate_load,        │────▶│  buildings (geo), │
+  │  building_id FK,        │         │  rank_candidates,      │     │  zips, events,    │
+  │  audit_log, RLS policy  │         │  check_constraints,    │     │  replies, season  │
+  └─────────────────────────┘         │  score_equity,         │     │  totals           │
+                                      │  plan_event, backfill, │     └──────────────────┘
+                                      │  reconcile,            │
+                                      │  estimate_savings,     │
+                                      │  recruitment_list      │
+                                      └─────────────────────────┘
 ```
 
 The SPA never talks to the MCP server or Mongo directly. A thin backend-for-
@@ -63,6 +64,32 @@ keeps every number sourced on the server side, satisfying the provenance rule
 - **One MCP, two consumers.** Per the project brief the same Commonwatt MCP
   server is used by Kiro during development and by the app at runtime. The BFF
   is the app's consumer.
+
+### Why Supabase for auth, Mongo for the rest
+
+Auth and account data — `users`, roles, the `building_id` mapping, and the
+approval audit trail — live in **Supabase (Postgres)**, separate from the
+Mongo store used for buildings/zips/events/replies:
+
+- **Referential integrity.** `users.building_id` is a real foreign key into
+  `buildings`; the database rejects a write that points a building user at a
+  building that doesn't exist. The same reference in Mongo would be an
+  unenforced `ObjectId`.
+- **Row-Level Security as a second line of defense.** The BFF already asserts
+  `id === session.buildingId` on every request (AC-4, AC-7). Postgres RLS
+  policies enforce that same scoping at the database layer, so the app's most
+  security-sensitive invariant doesn't rest on a single code path.
+- **Built-in auth primitives.** Password hashing and a managed `users` table
+  come with Supabase instead of being assembled from a library on top of
+  Mongo.
+- **Audit trail fits relational data.** `audit_log(user_id, event_id, action,
+  timestamp)` is a foreign-keyed, append-only row — exactly what Postgres is
+  built for.
+
+The front-end is unaffected either way; it only ever talks to the BFF. Where
+the rest of the data (buildings, zips, events, the knowledge graph) ultimately
+lives is a separate, still-open decision — this section covers auth/account
+data only.
 
 ## Components
 
@@ -169,6 +196,10 @@ Mongo; the front-end consumes the geocoded buildings. MA zip-code boundary
 GeoJSON ships as a static asset (public MassGIS / TIGER zip polygons); the BFF
 supplies per-zip values only, not geometry, so the map is fast and the geometry
 is cacheable.
+
+User accounts, roles, the building-to-user mapping, and the approval audit
+trail live separately in Supabase (Postgres), not Mongo — see **Auth and role
+boundary** below for why.
 
 ## Agent Loop
 
@@ -293,13 +324,25 @@ provenance is enforced at the edge.
 
 ### Auth and role boundary
 
+- **Store:** Supabase (Postgres) holds `users` (id, role, `building_id` FK,
+  password hash) — not Mongo. `building_id` is a foreign key into `buildings`,
+  so a user row can never reference a nonexistent building.
 - Session is an HTTP-only, SameSite cookie set by `/auth/login`; the SPA holds
-  no token. `/auth/me` returns `{ role, buildingId? }`.
+  no token and never talks to Supabase directly. The BFF verifies credentials
+  against Supabase and mints its own cookie; `/auth/me` returns `{ role,
+  buildingId? }`.
 - `RequireAuth` guards `/utility` and `/building`. A building session hitting
   `/utility` is redirected and the BFF returns 403 for any utility-only endpoint
   (AC-7).
 - Every `/building/:id` endpoint asserts `id === session.buildingId` for
   building sessions (AC-4, AC-27); utility sessions may read any building.
+- **Defense in depth:** Postgres Row-Level Security policies on `users` and
+  `audit_log` scope queries by `building_id` at the database layer, so a bug in
+  the BFF's own check above can't leak another building's data — AC-4/AC-7 is
+  enforced twice, not once.
+- Approvals (AC-21) and building replies (AC-29) write an `audit_log` row
+  (`user_id`, `event_id`, `action`, `timestamp`) in Supabase, giving a
+  relationally-consistent audit trail tied back to a real user and event.
 - For the demo, credentials and enrollment are seeded/simulated and labeled as
   such (AC-32); the auth mechanism is real so the boundary is demonstrable.
 
