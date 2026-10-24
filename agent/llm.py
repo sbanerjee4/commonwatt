@@ -20,7 +20,7 @@ import os
 from anthropic import AnthropicBedrock
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Default Bedrock model id for Claude 3.5 Haiku.
 # Override via COMMONWATT_MODEL_ID in .env if a different model is enabled.
