@@ -44,12 +44,18 @@ def _identity(db: DBSession, user: User) -> dict:
 
 
 def _set_cookie(response: Response, raw_token: str) -> None:
+    # The SPA (Vercel) and API (Render) are different sites, so the session
+    # cookie must be SameSite=None to be sent on cross-site XHR — and a
+    # SameSite=None cookie MUST also be Secure. Fall back to Lax only for local
+    # insecure dev (COMMONWATT_INSECURE_COOKIES), where None+non-Secure is
+    # rejected by browsers.
+    secure = cookie_is_secure()
     response.set_cookie(
         key=COOKIE_NAME,
         value=raw_token,
         httponly=True,
-        samesite="lax",
-        secure=cookie_is_secure(),
+        samesite="none" if secure else "lax",
+        secure=secure,
         max_age=int(SESSION_TTL.total_seconds()),
         path="/",
     )
@@ -79,5 +85,12 @@ def me(db: DBSession = Depends(get_db), user: User = Depends(current_user)) -> d
 def logout(response: Response, db: DBSession = Depends(get_db),
            cw_session: str | None = Cookie(default=None)) -> dict:
     delete_session(db, cw_session)
-    response.delete_cookie(COOKIE_NAME, path="/")
+    # Match the attributes used when setting it, or the browser keeps the cookie.
+    secure = cookie_is_secure()
+    response.delete_cookie(
+        COOKIE_NAME,
+        path="/",
+        samesite="none" if secure else "lax",
+        secure=secure,
+    )
     return {"ok": True}

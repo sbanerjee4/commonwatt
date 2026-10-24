@@ -457,3 +457,21 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 .map-meta { font-size: var(--text-sm); color: var(--color-muted); }
 .map-canvas { height: 420px; width: 100%; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-line); }
 .map-legend i { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; vertical-align: middle; margin-right: var(--space-1); }
+
+/* Sign-in error message + guarded-route loading state (cookie auth). */
+.auth-error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  margin: 0;
+}
+.route-loading {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  color: var(--text-muted, #667085);
+  font-size: 0.95rem;
+}

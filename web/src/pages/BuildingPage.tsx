@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { apiGet, apiPost } from '../lib/api'
-import { getSession } from '../lib/session'
+import { getIdentity } from '../lib/session'
 
 type BuildingProfile = {
   building_id?: string
@@ -114,7 +114,7 @@ export function BuildingPage() {
 
   // Scope to the signed-in facility's building (AC-27, audit #4) instead of a
   // hardcoded id. Falls back to the first seeded building when absent.
-  const buildingId = getSession()?.buildingId ?? 'PH-BLDG-1'
+  const buildingId = getIdentity()?.buildingId ?? 'PH-BLDG-1'
 
   const building = useQuery({
     queryKey: ['building', buildingId],

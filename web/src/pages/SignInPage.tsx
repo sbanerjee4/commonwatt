@@ -2,20 +2,31 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Heading } from '../components/ui'
 import { BrandMark, ArrowIcon } from '../components/icons'
-import { signIn } from '../lib/session'
+import { login } from '../lib/session'
 
-// NOTE: there is no /auth/login endpoint yet. Sign-in selects one of the seeded
-// demo accounts (db/seed.py) and persists its identity, which the API client
-// then attaches as X-User-Id / X-Role on every request. Real credential auth
-// wires in once the backend login endpoint lands.
+// Real credential sign-in against the backend /auth/login (cookie session).
+// Demo accounts live in db/seed.py:
+//   utility@demo / demo-utility-pass        (operator)
+//   building1@demo / demo-building-pass      (facility manager)
 export function SignInPage() {
-  const [role, setRole] = useState<'utility' | 'facility'>('facility')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const navigate = useNavigate()
 
-  function onSubmit(event: React.FormEvent) {
+  async function onSubmit(event: React.FormEvent) {
     event.preventDefault()
-    signIn(role)
-    navigate(role === 'utility' ? '/utility' : '/building')
+    setError(null)
+    setBusy(true)
+    try {
+      const identity = await login(email.trim(), password)
+      navigate(identity.role === 'utility' ? '/utility' : '/building')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign-in failed.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -27,34 +38,38 @@ export function SignInPage() {
         </Link>
         <div className="auth-heading">
           <Heading level={1}>Welcome back.</Heading>
-          <p>Choose your account type to access the right Commonwatt workspace.</p>
-        </div>
-        <div className="role-toggle" role="group" aria-label="Account type">
-          {(['utility', 'facility'] as const).map((item) => (
-            <button
-              type="button"
-              key={item}
-              className={role === item ? 'role-option selected' : 'role-option'}
-              onClick={() => setRole(item)}
-              aria-pressed={role === item}
-            >
-              <span className="radio-mark" />
-              {item === 'utility' ? 'Utility' : 'Facility manager'}
-              {role === item && <span className="selected-label">Selected</span>}
-            </button>
-          ))}
+          <p>Sign in with your Commonwatt account.</p>
         </div>
         <form className="auth-form" onSubmit={onSubmit}>
           <label>
             Email address
-            <input type="email" placeholder="name@organization.org" autoComplete="email" />
+            <input
+              type="text"
+              placeholder="name@organization.org"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </label>
           <label>
             Password
-            <input type="password" placeholder="Enter your password" autoComplete="current-password" />
+            <input
+              type="password"
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
           </label>
-          <button type="submit" className="button auth-submit">
-            Sign in
+          {error && (
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button type="submit" className="button auth-submit" disabled={busy}>
+            {busy ? 'Signing in…' : 'Sign in'}
             <ArrowIcon className="button-icon" />
           </button>
         </form>
