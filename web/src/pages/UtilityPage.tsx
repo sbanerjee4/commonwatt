@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { BuildingMap } from '../components/BuildingMap'
-import { apiGet, apiPost } from '../lib/api'
+import { apiGet, apiPost, ApiError } from '../lib/api'
 import type {
 SavingsResponse, RecruitmentResponse,
   EventDraftResponse,
+  EventPlan,
 } from '../lib/types'
 
 function MapPanel() {
@@ -101,6 +102,77 @@ function RecruitmentPanel() {
         </tbody>
       </table>
     </Panel>
+  )
+}
+
+// Pull a sensible default building id out of the drafted plan's portfolio,
+// so the operator composer is pre-filled with a building that is in the event.
+function firstBuildingId(plan: EventPlan): string {
+  for (const row of plan.portfolio) {
+    const id = (row as Record<string, unknown>).building_id ?? (row as Record<string, unknown>).buildingId
+    if (typeof id === 'string' && id) return id
+  }
+  return ''
+}
+
+// Operator -> building message composer. Posts to the real backend endpoint
+// (POST /inbox/{buildingId}/operator-message); the building's EventInbox polls
+// and shows it within seconds. Forbidden-wording rejections (422) are surfaced.
+function OperatorMessageBox({ defaultBuildingId }: { defaultBuildingId: string }) {
+  const [buildingId, setBuildingId] = useState(defaultBuildingId)
+  const [body, setBody] = useState('')
+  const [sentTo, setSentTo] = useState<string | null>(null)
+
+  const send = useMutation({
+    mutationFn: (payload: { buildingId: string; body: string }) =>
+      apiPost<{ ok: boolean }>(
+        `/inbox/${payload.buildingId}/operator-message`,
+        { body: payload.body },
+        { 'X-Role': 'operator' },
+      ),
+    onSuccess: (_d, vars) => {
+      setSentTo(vars.buildingId)
+      setBody('')
+    },
+  })
+
+  const onSend = () => {
+    const id = buildingId.trim()
+    const text = body.trim()
+    if (!id || !text || send.isPending) return
+    send.mutate({ buildingId: id, body: text })
+  }
+
+  return (
+    <div className="operator-message-box">
+      <label className="slider-label"><span>Message a building</span></label>
+      <input
+        type="text"
+        value={buildingId}
+        placeholder="Building id (e.g. PH-BLDG-1)"
+        onChange={(e) => setBuildingId(e.target.value)}
+      />
+      <div className="chat-composer">
+        <input
+          type="text"
+          value={body}
+          placeholder="Message to the building manager…"
+          onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSend() }}
+        />
+        <button className="ui-button primary" onClick={onSend} disabled={send.isPending}>
+          Send
+        </button>
+      </div>
+      {send.isError && (
+        <p className="caption">
+          {send.error instanceof ApiError && send.error.status === 422
+            ? 'Message rejected: it contains a forbidden word (e.g. “cut”, “shut off”).'
+            : 'Could not send. Confirm the building id has an active event.'}
+        </p>
+      )}
+      {sentTo && !send.isError && <p className="caption">✓ Sent to {sentTo}.</p>}
+    </div>
   )
 }
 
@@ -210,6 +282,7 @@ function OperatorAndAgent() {
                 <span>Audit line recorded · {plan.source_id}</span>
               </div>
             )}
+            {approved && <OperatorMessageBox defaultBuildingId={firstBuildingId(plan)} />}
           </>
         )}
       </Panel>
