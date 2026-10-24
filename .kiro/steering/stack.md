@@ -12,7 +12,7 @@ inclusion: always
 - **Auth:** bcrypt for password hashing; HTTP-only session cookies
 
 ## Project layout
-- Backend: `app/` (FastAPI routes), `db/` (SQLAlchemy models, migrations), `mcp/` (MCP tools)
+- Backend: `app/` (FastAPI routes), `db/` (SQLAlchemy models, migrations), `server/` (MCP tools), `agent/` (planner/critic + LLM), `bff/` (BFF API)
 - Frontend: `web/` (React app), `public/` (static assets)
 - Seeded data: `fixtures/` (SQL dumps or Python seed scripts)
 - Tests: `tests/` (backend + integration), `web/tests/` (frontend)
@@ -48,8 +48,10 @@ inclusion: always
 - Frontend refuses to render a number without source_id (AC-30)
 
 ## Geography
-- Use zip-level aggregates as primary layer; building markers as drill-in
-- All buildings geocoded to (lng, lat) points at ingest; null lngLat values surface in OrphanPanel
+- Use the zip-code choropleth as the primary aggregate layer; the equity and burden story is zip-level.
+- Drill into a zip to plot its buildings as markers at their geocoded address points (AC-11b).
+- Geocoding each address to a point is a backend concern; the front-end consumes already-geocoded buildings.
+- List zips missing geometry and buildings that fail geocoding in a side panel; never silently drop them (AC-12, AC-12b).
 
 ## Style
 - Trace events logged to `trace_steps` table as rows: event_id, ts, kind, summary, tool_name, version
