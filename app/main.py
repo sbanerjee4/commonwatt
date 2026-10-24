@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.routes import auth, chat, portfolio, push, sms
+from app.routes import auth, chat, portfolio, push
 
 
 @asynccontextmanager
@@ -34,7 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth.router)
-app.include_router(sms.router)
 app.include_router(chat.router)
 app.include_router(push.router)
 app.include_router(portfolio.router)

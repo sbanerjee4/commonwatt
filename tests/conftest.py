@@ -141,3 +141,19 @@ from hypothesis import settings  # noqa: E402
 
 settings.register_profile("default", max_examples=100)
 settings.load_profile("default")
+
+
+def make_utility(db, uid="util-test"):
+    """Expose the session's demo utility (created on demand)."""
+    return _ensure_utility(db, uid)
+
+
+def make_call_history(db, *, event, building_id, kw_requested=20.0):
+    """A call_history row so a parsed chat reply has a call_id to attach to."""
+    from db.models import CallHistory
+
+    c = CallHistory(event_id=event.id, building_id=building_id,
+                    kw_requested=kw_requested, reason="peak")
+    db.add(c)
+    db.commit()
+    return c

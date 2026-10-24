@@ -51,7 +51,10 @@ export function BuildingPage() {
         </div>
 
         {building.isError && (
-          <p className="caption">Could not reach the BFF. Is `make bff` running on :8000?</p>
+          <p className="caption">
+            Could not reach the API. Locally, run `make serve` (port 8000). On a deployed site, set
+            VITE_API_BASE_URL to the backend URL.
+          </p>
         )}
 
         <section className="status-card">
