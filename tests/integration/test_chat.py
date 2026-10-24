@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from db.models import (Base, Building, Event, Message, Reply,
-                       User, Utility, Zip)
+                       User, Utility, Zip, ZipUtility)
 from db.models import PlanBuilding as EventBuilding
+from app.auth import hash_password
 from notify.models import send_sms
 from notify.provider import InAppProvider
 
@@ -22,7 +23,8 @@ def run(coro):
 
 
 @pytest.fixture
-def ctx():
+def ctx(monkeypatch):
+    monkeypatch.setenv("COMMONWATT_INSECURE_COOKIES", "1")
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -35,10 +37,11 @@ def ctx():
                    enrolled=True, enrolled_capacity_kw=100, offered_capacity_kw=20)
     db.add_all([util, bld])
     db.commit()
+    db.add(ZipUtility(zip="00001", utility_id=util.id, source_id="sim:zu"))
     mgr = User(email="m@x.test", role="building_manager", building_id=bld.id,
-               password_hash="x")
+               password_hash=hash_password("pw-mgr"))
     op = User(email="op@x.test", role="utility", utility_id=util.id,
-              password_hash="x")
+              password_hash=hash_password("pw-op"))
     import datetime as _dt
     _now = _dt.datetime(2026, 7, 1, 14, 0, tzinfo=_dt.timezone.utc)
     ev = Event(utility_id=util.id, status="approved", window_label="Tue",
@@ -57,9 +60,20 @@ def ctx():
         yield db
 
     app.dependency_overrides[get_db] = _override
-    yield TestClient(app), db, dict(bld=bld.id, ev=ev.id, mgr=mgr.id, op=op.id)
+    client = TestClient(app)
+    yield client, db, dict(bld=bld.id, ev=ev.id, mgr=mgr.id, op=op.id)
     app.dependency_overrides.clear()
     db.close()
+
+
+def login_mgr(c):
+    assert c.post("/auth/login",
+                  json={"email": "m@x.test", "password": "pw-mgr"}).status_code == 200
+
+
+def login_op(c):
+    assert c.post("/auth/login",
+                  json={"email": "op@x.test", "password": "pw-op"}).status_code == 200
 
 
 def test_system_ask_posts_into_thread(ctx):
@@ -84,8 +98,8 @@ def test_manager_yes_writes_message_and_reply(ctx):
                       kw_enrolled=100, reason="peak", payment=200),
                  ids["ev"], db, InAppProvider(db)))
 
-    r = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "YES"},
-               headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    login_mgr(c)
+    r = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "YES"})
     assert r.status_code == 200
     assert r.json()["parsed_reply"]["kind"] == "yes"
     assert db.query(Reply).count() == 1
@@ -94,8 +108,8 @@ def test_manager_yes_writes_message_and_reply(ctx):
 
 def test_manager_kw_counter(ctx):
     c, db, ids = ctx
-    r = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "40 kW"},
-               headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    login_mgr(c)
+    r = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "40 kW"})
     assert r.status_code == 200
     reply = db.query(Reply).one()
     assert reply.kind == "counter" and reply.kw == 40
@@ -103,8 +117,8 @@ def test_manager_kw_counter(ctx):
 
 def test_manager_free_text_is_message_only(ctx):
     c, db, ids = ctx
-    r = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "can we talk?"},
-               headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    login_mgr(c)
+    r = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "can we talk?"})
     assert r.status_code == 200
     assert r.json()["parsed_reply"] is None
     assert db.query(Reply).count() == 0
@@ -113,23 +127,23 @@ def test_manager_free_text_is_message_only(ctx):
 
 def test_operator_takeover_free_text(ctx):
     c, db, ids = ctx
+    login_op(c)
     r = c.post(f"/inbox/{ids['bld']}/operator-message",
-               json={"body": "Hi, operator here — happy to adjust your ask."},
-               headers={"X-User-Id": str(ids["op"]), "X-Role": "operator"})
+               json={"body": "Hi, operator here — happy to adjust your ask."})
     assert r.status_code == 200
     assert db.query(Message).filter_by(sender_role="operator").count() == 1
 
 
 def test_operator_forbidden_word_rejected(ctx):
     c, db, ids = ctx
+    login_op(c)
     r = c.post(f"/inbox/{ids['bld']}/operator-message",
-               json={"body": "We will disconnect your power."},
-               headers={"X-User-Id": str(ids["op"]), "X-Role": "operator"})
+               json={"body": "We will disconnect your power."})
     assert r.status_code == 422
 
 
 def test_building_cannot_read_other_building(ctx):
     c, db, ids = ctx
-    r = c.get(f"/inbox/{ids['bld']}-other",
-              headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    login_mgr(c)
+    r = c.get(f"/inbox/{ids['bld']}-other")
     assert r.status_code == 403

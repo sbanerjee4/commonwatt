@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from db.models import (Base, Building, Event, Message,
-                       PushSubscription, User, Utility, Zip)
+                       PushSubscription, User, Utility, Zip, ZipUtility)
 from db.models import PlanBuilding as EventBuilding
+from app.auth import hash_password
 from notify.models import send_sms
 from notify.provider import InAppProvider
 from notify.push import notify_user
@@ -23,7 +24,8 @@ def run(coro):
 
 
 @pytest.fixture
-def ctx():
+def ctx(monkeypatch):
+    monkeypatch.setenv("COMMONWATT_INSECURE_COOKIES", "1")
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -36,10 +38,11 @@ def ctx():
     bld = Building(id="bld-elm", zip="00001", address="1 Elm St",
                    enrolled=True, enrolled_capacity_kw=100, offered_capacity_kw=20)
     db.add_all([util, bld]); db.commit()
+    db.add(ZipUtility(zip="00001", utility_id=util.id, source_id="sim:zu"))
     mgr = User(email="m@x.test", role="building_manager", building_id=bld.id,
-               password_hash="x")
+               password_hash=hash_password("pw-mgr"))
     op = User(email="op@x.test", role="utility", utility_id=util.id,
-              password_hash="x")
+              password_hash=hash_password("pw-op"))
     ev = Event(utility_id=util.id, status="approved", window_label="Tue",
                window_start=_now, window_end=_now + _dt.timedelta(hours=4),
                target_mw=150, cap_pct=25, current_version=1)
@@ -55,6 +58,16 @@ def ctx():
     app.dependency_overrides.clear(); db.close()
 
 
+def login_mgr(c):
+    assert c.post("/auth/login",
+                  json={"email": "m@x.test", "password": "pw-mgr"}).status_code == 200
+
+
+def login_op(c):
+    assert c.post("/auth/login",
+                  json={"email": "op@x.test", "password": "pw-op"}).status_code == 200
+
+
 def _ask(db, ids):
     run(send_sms(ids["mgr"], "building_ask",
                  dict(window="Tue", building_name="Elm", kw_requested=20,
@@ -65,39 +78,39 @@ def _ask(db, ids):
 def test_unread_count_since(ctx):
     c, db, ids = ctx
     _ask(db, ids)  # one system message, id 1
-    r = c.get(f"/inbox/{ids['bld']}/unread?since=0",
-              headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    login_mgr(c)
+    r = c.get(f"/inbox/{ids['bld']}/unread?since=0")
     assert r.json()["unread"] == 1
-    r2 = c.get(f"/inbox/{ids['bld']}/unread?since=1",
-               headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    r2 = c.get(f"/inbox/{ids['bld']}/unread?since=1")
     assert r2.json()["unread"] == 0
 
 
 def test_close_thread_blocks_replies(ctx):
     c, db, ids = ctx
     _ask(db, ids)
-    r = c.post(f"/inbox/{ids['bld']}/close",
-               headers={"X-User-Id": str(ids["op"]), "X-Role": "operator"})
+    login_op(c)
+    r = c.post(f"/inbox/{ids['bld']}/close")
     assert r.status_code == 200 and r.json()["closed"] is True
-    # After close, no open event → reply refused.
-    r2 = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "YES"},
-                headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    # After close, no open event → reply refused. Switch to the manager session.
+    login_mgr(c)
+    r2 = c.post(f"/inbox/{ids['bld']}/reply", json={"body": "YES"})
     assert r2.status_code == 409
 
 
 def test_close_requires_operator(ctx):
     c, db, ids = ctx
     _ask(db, ids)
-    r = c.post(f"/inbox/{ids['bld']}/close",
-               headers={"X-User-Id": str(ids["mgr"]), "X-Role": "building_manager"})
+    login_mgr(c)
+    r = c.post(f"/inbox/{ids['bld']}/close")
     assert r.status_code == 403
 
 
 def test_push_subscribe_stores(ctx):
     c, db, ids = ctx
+    login_mgr(c)
     sub = {"endpoint": "https://push.example/abc",
            "keys": {"p256dh": "key1", "auth": "auth1"}}
-    r = c.post("/push/subscribe", json=sub, headers={"X-User-Id": str(ids["mgr"])})
+    r = c.post("/push/subscribe", json=sub)
     assert r.status_code == 200
     assert db.query(PushSubscription).filter_by(user_id=ids["mgr"]).count() == 1
 

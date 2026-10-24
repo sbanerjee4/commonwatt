@@ -10,10 +10,49 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.auth import hash_password
+from app.db import get_db
+from db.models import Base, User, Utility, Zip
 
 client = TestClient(app)
+
+
+@pytest.fixture
+def operator_client(monkeypatch):
+    """A TestClient logged in as a utility operator, over an in-memory DB.
+
+    Used by the auth-gated LLM endpoints (/event/draft, building chat). Read
+    endpoints need no auth and use the module-level `client`.
+    """
+    monkeypatch.setenv("COMMONWATT_INSECURE_COOKIES", "1")
+    engine = create_engine("sqlite:///:memory:",
+                           connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = Session(engine, expire_on_commit=False)
+    db.add(Zip(zip="00001", ej=False))
+    util = Utility(id="util-ma", name="MA", source_id="sim:util")
+    db.add(util)
+    db.commit()
+    db.add(User(email="utility@demo", role="utility", utility_id=util.id,
+                password_hash=hash_password("pw-op")))
+    db.commit()
+
+    def _override():
+        yield db
+
+    app.dependency_overrides[get_db] = _override
+    c = TestClient(app)
+    assert c.post("/auth/login",
+                  json={"email": "utility@demo", "password": "pw-op"}).status_code == 200
+    yield c
+    app.dependency_overrides.clear()
+    db.close()
 
 
 def test_health():
@@ -101,7 +140,7 @@ def test_recruitment_labeled_simulated():
 
 # --- LLM endpoints, mocked so no Bedrock call is made ---
 
-def test_event_draft_mocked(monkeypatch):
+def test_event_draft_mocked(monkeypatch, operator_client):
     from agent import planner as planner_mod
 
     class _Plan:
@@ -133,7 +172,7 @@ def test_event_draft_mocked(monkeypatch):
 
     monkeypatch.setattr(planner_mod, "run_planner", lambda **kw: _Result())
 
-    r = client.post("/event/draft", json={"target_mw": 20.0, "ej_cap_pct": 0.35}, headers={"X-Role": "operator"})
+    r = operator_client.post("/event/draft", json={"target_mw": 20.0, "ej_cap_pct": 0.35})
     assert r.status_code == 200
     body = r.json()
     assert body["approved"] is True
@@ -141,7 +180,7 @@ def test_event_draft_mocked(monkeypatch):
     assert len(body["trace"]) == 1
 
 
-def test_building_chat_mocked(monkeypatch):
+def test_building_chat_mocked(monkeypatch, operator_client):
     from agent import chat as chat_mod
 
     class _Session:
@@ -150,7 +189,7 @@ def test_building_chat_mocked(monkeypatch):
 
     monkeypatch.setattr(chat_mod, "make_session", lambda bid, event_context=None: _Session())
 
-    r = client.post("/portfolio/building/129860/chat", json={"message": "what is my building?"})
+    r = operator_client.post("/portfolio/building/129860/chat", json={"message": "what is my building?"})
     assert r.status_code == 200
     body = r.json()
     assert body["buildingId"] == "129860"
