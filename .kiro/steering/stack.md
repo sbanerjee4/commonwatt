@@ -20,7 +20,10 @@ inclusion: always
 - Keep make setup, make test, make demo working; they are the only entry points.
 
 ## Geography
-- Use zip-level geography only; never place a building at a street address.
+- Use the zip-code choropleth as the primary aggregate layer; the equity and burden story is zip-level.
+- Drill into a zip to plot its buildings as markers at their geocoded address points (AC-11b).
+- Geocoding each address to a point is a backend concern; the front-end consumes already-geocoded buildings.
+- List zips missing geometry and buildings that fail geocoding in a side panel; never silently drop them (AC-12, AC-12b).
 
 ## Style
 - Write trace events as JSON lines: ts, step, tool, args, result_summary, version.
