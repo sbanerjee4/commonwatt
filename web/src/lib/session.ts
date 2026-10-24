@@ -1,66 +1,88 @@
-// Client-side session/identity for the demo.
+// Client-side session for the cookie-auth backend (app/routes/auth.py).
 //
-// There is no /auth/login endpoint yet, so sign-in selects one of the seeded
-// demo accounts (db/seed.py) and we persist its identity to localStorage. The
-// API client (lib/api.ts) reads this to attach X-User-Id / X-Role headers that
-// the backend's header-based access checks expect.
-//
-// Two role vocabularies exist in the backend: the users table uses
-// "utility" / "building_manager", while the route guards check
-// "operator" / "building_manager" (and /event/draft wants "operator"). We store
-// both: `role` for display/routing, `apiRole` for the header the endpoints read.
+// Login/logout/identity go through the real /auth endpoints. The session lives
+// in an HttpOnly `cw_session` cookie set by the backend — JS never sees it — so
+// requests just send `credentials: 'include'` (see lib/api.ts) and the browser
+// attaches the cookie. We cache only the non-secret identity shape the SPA
+// routes on, refreshed from /auth/me.
 
-const STORAGE_KEY = 'commonwatt.session'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 export type UiRole = 'utility' | 'facility'
-export type ApiRole = 'operator' | 'building_manager'
 
-export type Session = {
-  /** Seeded users.id, sent as X-User-Id. */
-  userId: number | null
-  /** Role used for routing/display. */
+// The identity shape /auth returns. Backend role is 'utility' | 'building_manager';
+// we map it to the UI's 'utility' | 'facility' for routing/display.
+export type Identity = {
   role: UiRole
-  /** Role string the backend endpoints check, sent as X-Role. */
-  apiRole: ApiRole
-  /** Building the session is scoped to (users.building_id), or null for operators. */
+  utilityId: string | null
   buildingId: string | null
-  email: string
 }
 
-// The four seeded demo accounts. Ids match insertion order on a fresh seed
-// (utility@demo=1, building1@demo=2, ...). See db/seed.py DEMO_ACCOUNTS.
-export const DEMO_ACCOUNTS: Record<UiRole, Session> = {
-  utility: {
-    userId: 1,
-    role: 'utility',
-    apiRole: 'operator',
-    buildingId: null,
-    email: 'utility@demo',
-  },
-  facility: {
-    userId: 2,
-    role: 'facility',
-    apiRole: 'building_manager',
-    buildingId: 'PH-BLDG-1',
-    email: 'building1@demo',
-  },
+type AuthResponse = {
+  role: 'utility' | 'building_manager'
+  utilityId: string | null
+  buildingId: string | null
 }
 
-export function getSession(): Session | null {
+const STORAGE_KEY = 'commonwatt.identity'
+
+function toUiRole(role: string): UiRole {
+  return role === 'utility' ? 'utility' : 'facility'
+}
+
+function fromResponse(data: AuthResponse): Identity {
+  return { role: toUiRole(data.role), utilityId: data.utilityId, buildingId: data.buildingId }
+}
+
+/** Cached identity for synchronous reads (routing/display). Null = signed out. */
+export function getIdentity(): Identity | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as Session) : null
+    return raw ? (JSON.parse(raw) as Identity) : null
   } catch {
     return null
   }
 }
 
-export function signIn(role: UiRole): Session {
-  const session = DEMO_ACCOUNTS[role]
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
-  return session
+function cache(identity: Identity | null): void {
+  if (identity) localStorage.setItem(STORAGE_KEY, JSON.stringify(identity))
+  else localStorage.removeItem(STORAGE_KEY)
 }
 
-export function signOut(): void {
-  localStorage.removeItem(STORAGE_KEY)
+/** Log in with real credentials. Throws on bad email/password (backend 401). */
+export async function login(email: string, password: string): Promise<Identity> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  if (!res.ok) {
+    cache(null)
+    throw new Error(res.status === 401 ? 'Invalid email or password.' : `Sign-in failed (${res.status}).`)
+  }
+  const identity = fromResponse((await res.json()) as AuthResponse)
+  cache(identity)
+  return identity
+}
+
+/** Clear the server session and local cache. */
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
+  } finally {
+    cache(null)
+  }
+}
+
+/** Re-read identity from the cookie via /auth/me. Returns null when signed out. */
+export async function refreshIdentity(): Promise<Identity | null> {
+  const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' })
+  if (!res.ok) {
+    cache(null)
+    return null
+  }
+  const identity = fromResponse((await res.json()) as AuthResponse)
+  cache(identity)
+  return identity
 }
