@@ -7,7 +7,7 @@ import { apiGet, apiPost } from '../lib/api'
 import { getUnread } from '../lib/chat'
 import { regionForZip, siteTypeFor } from '../lib/grouping'
 import type {
-SavingsResponse, RecruitmentResponse,
+SavingsResponse, RecruitmentResponse, RecruitmentCandidate,
   EventDraftResponse,
   AllBuildingsResponse,
   MapBuilding,
@@ -80,50 +80,158 @@ function SeasonPanel() {
 }
 
 function RecruitmentPanel() {
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const recruitment = useQuery({
     queryKey: ['recruitment', 8],
     queryFn: () => apiGet<RecruitmentResponse>('/recruitment?top_n=8'),
   })
 
+  const candidates = recruitment.data?.top_candidates ?? []
+  const selected = candidates.find((b) => b.building_id === selectedId) ?? null
+  const selectedRank = selected ? candidates.findIndex((b) => b.building_id === selectedId) + 1 : 0
+
   return (
     <Panel
       title="Recruitment candidates"
-      className="table-panel"
+      className="table-panel recruitment-panel"
       tools={<Tag>Simulated enrollment</Tag>}
     >
-      <table>
-        <thead>
-          <tr>
-            <th>Address</th>
-            <th>Zip</th>
-            <th>Type</th>
-            <th>Curtailable load</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recruitment.isLoading && (
-            <tr>
-              <td colSpan={4}>Loading candidates…</td>
-            </tr>
+      <div className="recruitment-body">
+        <div className="recruitment-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Address</th>
+                <th>Zip</th>
+                <th>Type</th>
+                <th>Curtailable load</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recruitment.isLoading && (
+                <tr>
+                  <td colSpan={4}>Loading candidates…</td>
+                </tr>
+              )}
+              {candidates.map((b) => (
+                <tr
+                  key={b.building_id}
+                  className={`recruitment-row ${selectedId === b.building_id ? 'active' : ''}`.trim()}
+                  onClick={() => setSelectedId(b.building_id)}
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSelectedId(b.building_id)
+                    }
+                  }}
+                >
+                  <td>{b.address}</td>
+                  <td className="mono">{b.zip}</td>
+                  <td>{b.property_type}</td>
+                  <td className="mono">
+                    {b.curtailable_load_kw !== null ? `${b.curtailable_load_kw.toLocaleString()} kW` : 'Unknown'}
+                    {b.load_basis === 'estimated_from_type' && <Tag>Estimated</Tag>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <aside className="recruitment-detail">
+          {!selected ? (
+            <p className="caption recruitment-detail-empty">Select a building to see more.</p>
+          ) : (
+            <RecruitmentDetail candidate={selected} rank={selectedRank} total={candidates.length} />
           )}
-          {recruitment.data?.top_candidates.map((b) => (
-            <tr key={b.building_id}>
-              <td>{b.address}</td>
-              <td className="mono">{b.zip}</td>
-              <td>{b.property_type}</td>
-              <td className="mono">
-                {b.curtailable_load_kw !== null ? `${b.curtailable_load_kw.toLocaleString()} kW` : 'Unknown'}
-                {b.load_basis === 'estimated_from_type' && <Tag>Estimated</Tag>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        </aside>
+      </div>
+
       <p className="caption panel-caption panel-caption-below">
         Buildings ranked by how much peak load they could reduce — the agent's suggested recruits
         for an upcoming event. Curtailable load is estimated from building type; enrollment is simulated.
       </p>
     </Panel>
+  )
+}
+
+// Detail + "why this is a good candidate" for one recruitment candidate. Every
+// line maps to a real field; income carries its ACS source id (provenance rule).
+function RecruitmentDetail({
+  candidate,
+  rank,
+  total,
+}: {
+  candidate: RecruitmentCandidate
+  rank: number
+  total: number
+}) {
+  const loadLabel =
+    candidate.curtailable_load_kw !== null
+      ? `${candidate.curtailable_load_kw.toLocaleString()} kW`
+      : 'Unknown'
+  const incomeLabel =
+    candidate.median_income !== null ? `$${candidate.median_income.toLocaleString()}` : 'Unavailable'
+
+  // Build the "why" from the ranking signals the backend actually uses:
+  // socioeconomic_priority (= ability to absorb) then curtailable load.
+  const reasons: string[] = []
+  if (rank > 0) reasons.push(`Ranked #${rank} of ${total} candidates by curtailable load.`)
+  if (candidate.curtailable_load_kw !== null && candidate.curtailable_load_kw >= 100)
+    reasons.push(`High curtailable load (${loadLabel}) — a large, flexible reduction in one site.`)
+  if (candidate.is_commercial)
+    reasons.push('Commercial building — a reduction lands on operations, not residents.')
+  if (candidate.affluence_tier === 'high')
+    reasons.push('Higher-income area, so the ask falls where it is least burdensome.')
+  if (candidate.affluence_tier === 'low')
+    reasons.push('Lower-income area — include only with care; the program spares those a reduction hurts most.')
+  if (reasons.length === 0)
+    reasons.push('Eligible, unenrolled building with measurable curtailable load.')
+
+  return (
+    <div className="recruitment-detail-card">
+      <header>
+        <strong>{candidate.address}</strong>
+        <small>
+          {candidate.property_type ?? 'Unknown type'} · zip {candidate.zip ?? '—'}
+        </small>
+      </header>
+
+      <dl className="recruitment-facts">
+        <div>
+          <dt>Curtailable load</dt>
+          <dd>
+            {loadLabel}
+            {candidate.load_basis === 'estimated_from_type' && <Tag>Estimated</Tag>}
+          </dd>
+        </div>
+        <div>
+          <dt>Median income</dt>
+          <dd>
+            {incomeLabel}
+            {candidate.income_source_id && <small className="src">· {candidate.income_source_id}</small>}
+          </dd>
+        </div>
+        <div>
+          <dt>Affluence tier</dt>
+          <dd className="cap">{candidate.affluence_tier}</dd>
+        </div>
+        <div>
+          <dt>EJ zip</dt>
+          <dd>{candidate.is_ej ? 'Yes' : 'No'}</dd>
+        </div>
+      </dl>
+
+      <div className="recruitment-why">
+        <h4>Why it's a good candidate</h4>
+        <ul>
+          {reasons.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
   )
 }
 
