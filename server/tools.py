@@ -615,6 +615,11 @@ def recruitment_list(top_n: int = 50) -> dict[str, Any]:
                 "curtailable_load_kw": b.curtailable_load_kw,
                 "load_basis": b.load_basis,
                 "is_ej": b.is_ej,
+                "median_income": b.median_income,
+                "affluence_tier": b.affluence_tier,
+                "is_commercial": b.is_commercial,
+                "socioeconomic_priority": round(b.socioeconomic_priority, 2),
+                "income_source_id": INCOME_SOURCE_ID if b.median_income else None,
             }
             for b in ej_buildings[:top_n]
         ],

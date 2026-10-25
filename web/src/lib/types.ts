@@ -69,6 +69,11 @@ export type RecruitmentCandidate = {
   curtailable_load_kw: number | null
   load_basis: 'metered' | 'estimated_from_type' | 'unknown'
   is_ej: boolean
+  median_income: number | null
+  affluence_tier: 'low' | 'middle' | 'high' | 'unknown'
+  is_commercial: boolean
+  socioeconomic_priority: number
+  income_source_id: string | null
 }
 
 export type RecruitmentResponse = {
