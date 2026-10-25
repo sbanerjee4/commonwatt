@@ -150,7 +150,7 @@ function BuildingChat({ buildingId }: { buildingId: string }) {
   ]
 
   return (
-    <Panel title="Ask the Commonwatt assistant" tools={<Tag>AI · reads your building data</Tag>}>
+    <Panel title="Ask the Commonwatt assistant">
       <p className="request-explainer">
         Ask about your building, your energy use, or today’s request. The assistant reads your
         building’s real data and never invents numbers.
@@ -196,10 +196,10 @@ function BuildingChat({ buildingId }: { buildingId: string }) {
 // per-facility-earnings endpoint, so these mirror the design mock. The selected
 // facility's status card below reads the real /portfolio/buildings/{id}.
 const FACILITIES = [
-  { name: 'Franklin Street Center', town: 'Boston', status: 'Request today', tone: 'attention', capacityKw: 420, earnings: '$3,214', selected: true },
-  { name: 'North Point Offices', town: 'Cambridge', status: 'Available', tone: '', capacityKw: 310, earnings: '$2,408', selected: false },
-  { name: 'Harbor Exchange', town: 'Boston', status: 'Available', tone: '', capacityKw: 275, earnings: '$1,692', selected: false },
-  { name: 'Riverside Works', town: 'Somerville', status: 'Not asked', tone: '', capacityKw: 190, earnings: '$1,146', selected: false },
+  { name: 'Franklin Street Center', town: 'Boston', status: 'Request today', tone: 'attention', capacityKw: 420, earnings: '$3,214' },
+  { name: 'North Point Offices', town: 'Cambridge', status: 'Available', tone: '', capacityKw: 310, earnings: '$2,408' },
+  { name: 'Harbor Exchange', town: 'Boston', status: 'Available', tone: '', capacityKw: 275, earnings: '$1,692' },
+  { name: 'Riverside Works', town: 'Somerville', status: 'Not asked', tone: '', capacityKw: 190, earnings: '$1,146' },
 ] as const
 
 const EARNINGS_LEGEND = [
@@ -212,6 +212,7 @@ const EARNINGS_LEGEND = [
 export function BuildingPage() {
   const [reply, setReply] = useState<'yes' | 'no' | 'offer'>('yes')
   const [submitted, setSubmitted] = useState(false)
+  const [selectedName, setSelectedName] = useState<string>(FACILITIES[0].name)
 
   // Scope to the signed-in facility's building (AC-27, audit #4) instead of a
   // hardcoded id. Falls back to the first seeded building when absent.
@@ -223,7 +224,6 @@ export function BuildingPage() {
   })
 
   const profile = building.data
-  const selectedName = 'Franklin Street Center'
   const load =
     profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : '420 kW'
 
@@ -259,19 +259,34 @@ export function BuildingPage() {
                 </tr>
               </thead>
               <tbody>
-                {FACILITIES.map((f) => (
-                  <tr key={f.name} className={f.selected ? 'selected-row' : ''}>
-                    <td>
-                      <strong>{f.name}</strong>
-                      <small>{f.selected ? `Selected · ${f.town}` : f.town}</small>
-                    </td>
-                    <td>
-                      <Tag tone={f.tone}>{f.status}</Tag>
-                    </td>
-                    <td className="mono">{f.capacityKw} kW</td>
-                    <td className="mono">{f.earnings}</td>
-                  </tr>
-                ))}
+                {FACILITIES.map((f) => {
+                  const isSelected = f.name === selectedName
+                  return (
+                    <tr
+                      key={f.name}
+                      className={`facility-row ${isSelected ? 'selected-row' : ''}`.trim()}
+                      onClick={() => setSelectedName(f.name)}
+                      tabIndex={0}
+                      aria-selected={isSelected}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setSelectedName(f.name)
+                        }
+                      }}
+                    >
+                      <td>
+                        <strong>{f.name}</strong>
+                        <small>{isSelected ? `Selected · ${f.town}` : f.town}</small>
+                      </td>
+                      <td>
+                        <Tag tone={f.tone}>{f.status}</Tag>
+                      </td>
+                      <td className="mono">{f.capacityKw} kW</td>
+                      <td className="mono">{f.earnings}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </Panel>
