@@ -1,8 +1,8 @@
 # Commonwatt
 
 ## Video Link and Vercel Deployment
-Video: https://drive.google.com/file/d/1HIw505iDwSoZeuGfxcoSMoAUcTw-CH6-/view?usp=sharing \
-Deployment: https://commonwatt.vercel.app/ \
+Video: [https://drive.google.com/file/d/1HIw505iDwSoZeuGfxcoSMoAUcTw-CH6-/view?usp=sharing](https://drive.google.com/file/d/1HIw505iDwSoZeuGfxcoSMoAUcTw-CH6-/view?usp=sharing) \
+Deployment: [https://commonwatt.vercel.app/](https://commonwatt.vercel.app/) \
 Vercel Authentication:
 - utility@demo; demo-utility-pass
 - building1@demo; demo-building-pass
