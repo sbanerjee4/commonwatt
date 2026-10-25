@@ -29,7 +29,7 @@ function buildProposalSummary(data: EventDraftResponse): string {
 
 function MapPanel() {
   return (
-    <Panel title="Portfolio map" className="map-panel" tools={<Tag>Building pins · Boston</Tag>}>
+    <Panel title="Portfolio map" className="map-panel">
       <BuildingMap />
     </Panel>
   )
@@ -91,6 +91,10 @@ function RecruitmentPanel() {
       className="table-panel"
       tools={<Tag>Simulated enrollment</Tag>}
     >
+      <p className="caption panel-caption">
+        Buildings ranked by how much peak load they could reduce — the agent's suggested recruits
+        for an upcoming event. Curtailable load is estimated from building type; enrollment is simulated.
+      </p>
       <table>
         <thead>
           <tr>
@@ -272,7 +276,7 @@ function OperatorAndAgent() {
       >
         {!data && (
           <p className="caption">
-            The live agent trace (forecast → plan v1 → constraint check → self-correct → plan v2)
+            The live agent trace (forecast → plan → constraint check → self-correct → revised plan)
             appears here after you draft a proposal.
           </p>
         )}
@@ -411,7 +415,7 @@ function ConversationsPanel() {
           )}
 
           {[...groups.entries()].map(([label, items]) => {
-            const isCollapsed = collapsed[label] ?? false
+            const isCollapsed = collapsed[label] ?? true
             return (
               <div className="convo-group" key={label}>
                 <button

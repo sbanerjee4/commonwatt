@@ -513,7 +513,8 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 .operator-message-box > input { padding: var(--space-1) var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); }
 .conversations-panel { grid-column: 1 / -1; }
 .conversations-body { display: grid; grid-template-columns: minmax(16rem, 22rem) 1fr; min-height: 22rem; }
-.conversations-list { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-4); border-right: 1px solid var(--color-line); }
+.conversations-list { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-4); border-right: 1px solid var(--color-line); max-height: 32rem; overflow-y: auto; }
+.panel-caption { padding: var(--space-3) var(--space-4) 0; color: var(--color-muted); }
 .conversations-list select { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); }
 .conversation-item { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-ink); font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .conversation-item.active { border-color: var(--color-primary); background: var(--color-accent-soft); }
@@ -544,7 +545,7 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 
 
 /* Conversations: grouped + searchable facility browser */
-.convos-controls { display: grid; gap: var(--space-2); margin-bottom: var(--space-2); }
+.convos-controls { position: sticky; top: calc(var(--space-4) * -1); z-index: 1; display: grid; gap: var(--space-2); margin-bottom: var(--space-2); padding-bottom: var(--space-2); background: var(--color-surface); }
 .convos-controls label { display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--color-muted); }
 .convos-controls input[type="search"] { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); font: var(--text-sm) var(--font-body); }
 .convo-group { display: grid; gap: var(--space-2); }
