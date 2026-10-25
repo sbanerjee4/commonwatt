@@ -423,6 +423,7 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
   .operator-panel { grid-row: 2; }
   .agent-panel { grid-column: auto; }
   .season-expanded { grid-column: auto; }
+  .recruitment-panel { grid-column: auto; }
 }
 @media (max-width: 720px) {
   .app-header, .dashboard, .account { padding-inline: var(--space-4); }
@@ -512,6 +513,7 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 .operator-message-box { margin-top: var(--space-3); display: grid; gap: var(--space-2); }
 .operator-message-box > input { padding: var(--space-1) var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-canvas); color: var(--color-ink); }
 .conversations-panel { grid-column: 1 / -1; }
+.recruitment-panel { grid-column: 1 / -1; }
 .conversations-body { display: grid; grid-template-columns: minmax(16rem, 22rem) 1fr; min-height: 22rem; }
 .conversations-list { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-4); border-right: 1px solid var(--color-line); max-height: 32rem; overflow-y: auto; }
 .panel-caption { padding: var(--space-3) var(--space-4) 0; color: var(--color-muted); }
