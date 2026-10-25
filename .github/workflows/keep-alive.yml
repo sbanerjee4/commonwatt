@@ -1,0 +1,38 @@
+name: keep-alive
+
+# Pings the Render backend so it does not spin down on the free tier (which
+# sleeps after ~15 min idle and then pays a 30-60s cold start). Keeps the
+# public demo / resume link responsive for first-time visitors.
+#
+# Caveats to know:
+#  - GitHub cron is best-effort; under load a run can be several minutes late.
+#    10-min interval leaves slack so a late run still beats the 15-min sleep.
+#  - GitHub DISABLES scheduled workflows after 60 days with no repo commits.
+#    Any push (or re-enabling it in the Actions tab) resets that clock.
+#
+# Backend URL: edit BACKEND_URL below if your Render service URL differs, OR
+# set a repo variable named BACKEND_URL (Settings > Secrets and variables >
+# Actions > Variables) and it will be used instead.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 minutes (UTC)
+  workflow_dispatch:          # lets you run it manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend /health
+        run: |
+          URL="${{ vars.BACKEND_URL || 'https://commonwatt-api.onrender.com' }}"
+          echo "Pinging $URL/health"
+          # --max-time 90 covers a cold-start wake; retry a couple times.
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$URL/health") && break
+            echo "attempt $i failed, retrying…"; sleep 10
+          done
+          echo "HTTP $code"
+          # Treat any HTTP response as success (server is awake). Only a
+          # total connection failure (empty code) fails the job.
+          [ -n "$code" ] && [ "$code" != "000" ]
