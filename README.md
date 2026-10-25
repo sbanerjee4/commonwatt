@@ -1,5 +1,12 @@
 # Commonwatt
 
+## Video Link and Vercel Deployment
+Video: https://drive.google.com/file/d/1HIw505iDwSoZeuGfxcoSMoAUcTw-CH6-/view?usp=sharing \
+Deployment: https://commonwatt.vercel.app/ \
+Authentication:
+- utility@demo; demo-utility-pass
+- building1@demo; demo-building-pass
+
 > Keep the grid up without leaning on the same neighborhoods twice.
 
 ## Track
