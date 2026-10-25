@@ -369,6 +369,9 @@ td .tag { margin-left: var(--space-2); }
 .facility-table td:first-child { display: grid; gap: var(--space-1); }
 .facility-table td small { color: var(--color-muted); font-size: .68rem; }
 .facility-table .selected-row { background: var(--color-accent-soft); box-shadow: inset var(--space-1) 0 var(--color-primary); }
+.facility-table .facility-row { cursor: pointer; }
+.facility-table .facility-row:hover td { background: var(--color-canvas); }
+.facility-table .facility-row.selected-row:hover td { background: var(--color-accent-soft); }
 .earnings-chart { display: grid; grid-template-columns: 9rem 1fr; align-items: center; gap: var(--space-5); padding: var(--space-5); }
 .pie-chart {
   width: 9rem; aspect-ratio: 1; display: grid; place-items: center; border-radius: 50%;
