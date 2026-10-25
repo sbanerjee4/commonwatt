@@ -556,12 +556,12 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 .panel-caption-below { padding: var(--space-3) var(--space-4) var(--space-4); border-top: 1px solid var(--color-line); }
 
 /* Left slide-in drawer for the agent reasoning trace (opened from Expand reasoning). */
-.reasoning-drawer-root { position: fixed; inset: 0; z-index: 50; display: flex; }
+.reasoning-drawer-root { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: flex-end; }
 .reasoning-backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-ink) 45%, transparent); }
 .reasoning-drawer {
   position: relative; z-index: 1; display: flex; flex-direction: column; width: min(32rem, 92vw); height: 100%;
-  background: var(--color-surface); color: var(--color-ink); border-right: 1px solid var(--color-line);
-  box-shadow: 1rem 0 3rem color-mix(in srgb, var(--color-ink) 22%, transparent); overflow-y: auto;
+  background: var(--color-surface); color: var(--color-ink); border-left: 1px solid var(--color-line);
+  box-shadow: -1rem 0 3rem color-mix(in srgb, var(--color-ink) 22%, transparent); overflow-y: auto;
   animation: reasoning-slide-in .22s ease-out;
 }
 .reasoning-drawer-head {
@@ -570,5 +570,5 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
 }
 .reasoning-drawer-head strong { display: block; font-size: var(--text-base); }
 .reasoning-drawer-head small { color: var(--color-muted); font-size: var(--text-sm); }
-@keyframes reasoning-slide-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes reasoning-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .reasoning-drawer { animation: none; } }
