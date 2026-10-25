@@ -91,10 +91,6 @@ function RecruitmentPanel() {
       className="table-panel"
       tools={<Tag>Simulated enrollment</Tag>}
     >
-      <p className="caption panel-caption">
-        Buildings ranked by how much peak load they could reduce — the agent's suggested recruits
-        for an upcoming event. Curtailable load is estimated from building type; enrollment is simulated.
-      </p>
       <table>
         <thead>
           <tr>
@@ -123,6 +119,10 @@ function RecruitmentPanel() {
           ))}
         </tbody>
       </table>
+      <p className="caption panel-caption panel-caption-below">
+        Buildings ranked by how much peak load they could reduce — the agent's suggested recruits
+        for an upcoming event. Curtailable load is estimated from building type; enrollment is simulated.
+      </p>
     </Panel>
   )
 }
@@ -242,6 +242,15 @@ function OperatorAndAgent() {
               <button className="ui-button ghost" onClick={() => { draft.reset(); approve.reset() }}>
                 Reject
               </button>
+              {data && (
+                <button
+                  className="ui-button secondary"
+                  aria-expanded={showReasoning}
+                  onClick={() => setShowReasoning(true)}
+                >
+                  Expand reasoning
+                </button>
+              )}
             </div>
             {approve.isError && (
               <p className="caption">Could not approve the event. Please try again.</p>
@@ -259,64 +268,62 @@ function OperatorAndAgent() {
       <Panel
         title="Planning agent"
         className="agent-panel"
-        tools={
-          <div className="agent-tools">
-            <Tag>{data ? (data.approved ? 'Approved by critic' : 'Needs review') : 'Idle'}</Tag>
-            <button
-              type="button"
-              className="ui-button ghost reasoning-toggle"
-              aria-expanded={showReasoning}
-              disabled={!data}
-              onClick={() => setShowReasoning((v) => !v)}
-            >
-              {showReasoning ? 'Hide reasoning' : 'Show reasoning'}
-            </button>
-          </div>
-        }
+        tools={<Tag>{data ? (data.approved ? 'Approved by critic' : 'Needs review') : 'Idle'}</Tag>}
       >
-        {!data && (
+        {!data ? (
           <p className="caption">
-            The live agent trace (forecast → plan → constraint check → self-correct → revised plan)
-            appears here after you draft a proposal.
+            Draft a proposal to run the planning agent. Its reasoning trace (forecast → plan →
+            constraint check → self-correct → revised plan) opens from <b>Expand reasoning</b> once a
+            proposal exists.
           </p>
-        )}
-        {data && !showReasoning && (
+        ) : (
           <p className="caption reasoning-collapsed-hint">
-            {data.trace.length} steps retained. Select <b>Show reasoning</b> to inspect the full
-            agent trace behind this proposal.
+            {data.trace.length} steps retained across {data.iterations} iteration(s). Select{' '}
+            <b>Expand reasoning</b> on the proposal to inspect the full agent trace.
           </p>
-        )}
-        {data && showReasoning && (
-          <div className="agent-evidence">
-            <details open>
-              <summary>
-                <span>Agent trace</span>
-                <small>{data.trace.length} steps · {data.iterations} iteration(s)</small>
-              </summary>
-              <ol className="trace-list">
-                {data.trace.map((step, index) => {
-                  const isRevision = step.kind === 'self_correct'
-                  return (
-                    <li className={isRevision ? 'revision' : ''} key={`${step.ts}-${index}`}>
-                      <time>{fmtTime(step.ts)}</time>
-                      <div>
-                        <strong>
-                          {step.kind === 'plan' && step.planVersion
-                            ? `Plan v${step.planVersion}`
-                            : step.kind.replace(/_/g, ' ')}
-                        </strong>
-                        {step.rejectedBy && <Tag tone="attention">Rejected: {step.rejectedBy}</Tag>}
-                        <p>{step.summary}</p>
-                      </div>
-                      {step.toolName && <code>{step.toolName}</code>}
-                    </li>
-                  )
-                })}
-              </ol>
-            </details>
-          </div>
         )}
       </Panel>
+
+      {data && showReasoning && (
+        <div className="reasoning-drawer-root" role="dialog" aria-modal="true" aria-label="Agent reasoning trace">
+          <div className="reasoning-backdrop" onClick={() => setShowReasoning(false)} />
+          <aside className="reasoning-drawer">
+            <div className="reasoning-drawer-head">
+              <div>
+                <strong>Agent reasoning</strong>
+                <small>{data.trace.length} steps · {data.iterations} iteration(s)</small>
+              </div>
+              <button
+                type="button"
+                className="ui-button ghost"
+                onClick={() => setShowReasoning(false)}
+              >
+                Hide
+              </button>
+            </div>
+            <ol className="trace-list">
+              {data.trace.map((step, index) => {
+                const isRevision = step.kind === 'self_correct'
+                return (
+                  <li className={isRevision ? 'revision' : ''} key={`${step.ts}-${index}`}>
+                    <time>{fmtTime(step.ts)}</time>
+                    <div>
+                      <strong>
+                        {step.kind === 'plan' && step.planVersion
+                          ? `Plan v${step.planVersion}`
+                          : step.kind.replace(/_/g, ' ')}
+                      </strong>
+                      {step.rejectedBy && <Tag tone="attention">Rejected: {step.rejectedBy}</Tag>}
+                      <p>{step.summary}</p>
+                    </div>
+                    {step.toolName && <code>{step.toolName}</code>}
+                  </li>
+                )
+              })}
+            </ol>
+          </aside>
+        </div>
+      )}
     </>
   )
 }
@@ -379,7 +386,7 @@ function ConversationsPanel() {
   }
 
   const toggleGroup = (label: string) =>
-    setCollapsed((prev) => ({ ...prev, [label]: !prev[label] }))
+    setCollapsed((prev) => ({ ...prev, [label]: !(prev[label] ?? true) }))
 
   return (
     <Panel
