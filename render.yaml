@@ -46,6 +46,13 @@ services:
         fromDatabase:
           name: commonwatt-db
           property: connectionString
+      # Set to "true" to (re)seed the demo data on every boot. The seed is
+      # idempotent (upserts), so it fixes a stale DB on the next deploy and is a
+      # no-op thereafter. Free tier has no Shell/preDeployCommand, so this is the
+      # only way to re-seed after a data change (e.g. repointing building1@demo).
+      # Safe to leave on for a demo; set to "false"/unset to disable.
+      - key: COMMONWATT_SEED_ON_STARTUP
+        value: "true"
       # Comma-separated allowlist read by app/main.py. Replace with your real
       # Vercel domain(s) once known.
       - key: COMMONWATT_CORS_ORIGINS
