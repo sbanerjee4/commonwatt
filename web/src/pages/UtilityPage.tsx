@@ -265,25 +265,6 @@ function OperatorAndAgent() {
         )}
       </Panel>
 
-      <Panel
-        title="Planning agent"
-        className="agent-panel"
-        tools={<Tag>{data ? (data.approved ? 'Approved by critic' : 'Needs review') : 'Idle'}</Tag>}
-      >
-        {!data ? (
-          <p className="caption">
-            Draft a proposal to run the planning agent. Its reasoning trace (forecast → plan →
-            constraint check → self-correct → revised plan) opens from <b>Expand reasoning</b> once a
-            proposal exists.
-          </p>
-        ) : (
-          <p className="caption reasoning-collapsed-hint">
-            {data.trace.length} steps retained across {data.iterations} iteration(s). Select{' '}
-            <b>Expand reasoning</b> on the proposal to inspect the full agent trace.
-          </p>
-        )}
-      </Panel>
-
       {data && showReasoning && (
         <div className="reasoning-drawer-root" role="dialog" aria-modal="true" aria-label="Agent reasoning trace">
           <div className="reasoning-backdrop" onClick={() => setShowReasoning(false)} />
