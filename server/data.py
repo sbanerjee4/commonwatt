@@ -276,10 +276,31 @@ def _load_factor(property_type: str) -> float:
 
 @lru_cache(maxsize=1)
 def load_buildings() -> list[Building]:
-    """Load and parse all buildings from the fixture. Cached after first call."""
+    """
+    Load and parse all buildings from the fixture. Cached after first call.
+
+    BERDO files some physical campuses (e.g. hospitals) as several records that
+    share an address and zip but carry distinct building ids (a base id plus
+    `-NNNN` suffixed sub-records). Left in, they show the same building several
+    times in the recruitment list AND let the planner double-count one campus's
+    load. We collapse rows on (address, zip), keeping the first occurrence so the
+    stable base id and ordering are preserved. Records missing an address are
+    kept as-is (no safe key to merge them on).
+    """
     with open(FIXTURE_PATH) as f:
         data = json.load(f)
-    return [Building(**r) for r in data["records"]]
+
+    seen: set[tuple[str, str | None]] = set()
+    buildings: list[Building] = []
+    for r in data["records"]:
+        b = Building(**r)
+        key = (b.address, b.zip)
+        if b.address and key in seen:
+            continue  # duplicate physical building — already have it
+        if b.address:
+            seen.add(key)
+        buildings.append(b)
+    return buildings
 
 
 @lru_cache(maxsize=1)
