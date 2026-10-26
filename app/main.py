@@ -13,10 +13,47 @@ from app.routes import admin, auth, chat, portfolio, push
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _maybe_rebuild_db_on_startup()
     init_db()
     _maybe_reconcile_schema_on_startup()
     _maybe_seed_on_startup()
     yield
+
+
+def _maybe_rebuild_db_on_startup() -> None:
+    """Drop and recreate ALL tables from the current model, when explicitly asked.
+
+    The live free-tier Postgres was bootstrapped by create_all on an OLDER model
+    and was never migrated (no Shell, no preDeploy, unstamped DB — so `alembic
+    upgrade head` restarts at 0001 and collides). create_all never ALTERs an
+    existing table, so the live schema has drifted from the model in several
+    places (the messages.sender_role CHECK, the call_history.est_payment column,
+    and potentially more). Patching columns one at a time just surfaces the next
+    drift as the next 500.
+
+    Because ALL data here is seeded/simulated demo data (no real user content),
+    the robust fix is to rebuild the schema from scratch so it EXACTLY matches
+    the model, then let the seed repopulate it. This is DESTRUCTIVE, so it is
+    gated behind its own explicit flag (COMMONWATT_REBUILD_DB) — NOT the seed
+    flag — and must be turned off again after one boot. A failure is logged but
+    never blocks startup.
+    """
+    import logging
+    import os
+
+    flag = os.environ.get("COMMONWATT_REBUILD_DB", "").strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return
+    log = logging.getLogger("uvicorn.error")
+    try:
+        from app.db import engine
+        from db.models import Base
+
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
+        log.warning("Startup DB REBUILD completed (COMMONWATT_REBUILD_DB): all tables dropped and recreated from the model. Turn the flag off now.")
+    except Exception:  # noqa: BLE001 — never let a rebuild error crash the service
+        log.exception("Startup DB rebuild failed; continuing.")
 
 
 def _maybe_reconcile_schema_on_startup() -> None:
