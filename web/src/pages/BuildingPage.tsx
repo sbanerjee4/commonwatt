@@ -164,28 +164,34 @@ function EventInbox({ buildingId }: { buildingId: string }) {
 // Managed-facilities portfolio. STATIC: there is no multi-facility or
 // per-facility-earnings endpoint, so these mirror the design mock. The selected
 // facility's status card below reads the real /portfolio/buildings/{id}.
+// Facility rows map to REAL seeded building ids so selecting one loads that
+// building's real profile/inbox. The first row is the signed-in building (it
+// carries the demo event); the others are the other seeded demo buildings.
 const FACILITIES = [
-  { name: 'Franklin Street Center', town: 'Boston', status: 'Request today', tone: 'attention', capacityKw: 420, earnings: '$3,214' },
-  { name: 'North Point Offices', town: 'Cambridge', status: 'Available', tone: '', capacityKw: 310, earnings: '$2,408' },
-  { name: 'Harbor Exchange', town: 'Boston', status: 'Available', tone: '', capacityKw: 275, earnings: '$1,692' },
-  { name: 'Riverside Works', town: 'Somerville', status: 'Not asked', tone: '', capacityKw: 190, earnings: '$1,146' },
+  { id: '129860', name: '730 Border St.', town: 'Boston', status: 'Request today', tone: 'attention', capacityKw: 420, earnings: '$3,214' },
+  { id: '114120', name: 'North Point Offices', town: 'Cambridge', status: 'Available', tone: '', capacityKw: 310, earnings: '$2,408' },
+  { id: '100901', name: '1725 Hyde Park Ave', town: 'Boston', status: 'Available', tone: '', capacityKw: 275, earnings: '$1,692' },
 ] as const
 
 const EARNINGS_LEGEND = [
-  { key: 'one', name: 'Franklin Street Center', pct: '38%' },
-  { key: 'two', name: 'North Point Offices', pct: '28%' },
-  { key: 'three', name: 'Harbor Exchange', pct: '20%' },
-  { key: 'four', name: 'Riverside Works', pct: '14%' },
+  { key: 'one', name: '730 Border St.', pct: '45%' },
+  { key: 'two', name: 'North Point Offices', pct: '33%' },
+  { key: 'three', name: '1725 Hyde Park Ave', pct: '22%' },
 ] as const
 
 export function BuildingPage() {
   const [reply, setReply] = useState<'yes' | 'no' | 'offer'>('yes')
   const [submitted, setSubmitted] = useState(false)
-  const [selectedName, setSelectedName] = useState<string>(FACILITIES[0].name)
+  // Selected facility drives which REAL building's data is loaded. Default to
+  // the signed-in building when it matches a row, else the first row.
+  const signedInId = getIdentity()?.buildingId ?? null
+  const defaultFacility = FACILITIES.find((f) => f.id === signedInId) ?? FACILITIES[0]
+  const [selectedId, setSelectedId] = useState<string>(defaultFacility.id)
+  const selectedFacility = FACILITIES.find((f) => f.id === selectedId) ?? FACILITIES[0]
+  const selectedName = selectedFacility.name
 
-  // Scope to the signed-in facility's building (AC-27, audit #4) instead of a
-  // hardcoded id. Falls back to the first seeded building when absent.
-  const buildingId = getIdentity()?.buildingId ?? 'PH-BLDG-1'
+  // All building-scoped queries follow the SELECTED facility's real id.
+  const buildingId = selectedId
 
   const building = useQuery({
     queryKey: ['building', buildingId],
@@ -237,7 +243,7 @@ export function BuildingPage() {
         )}
 
         <div className="portfolio-grid">
-          <Panel title="Managed facilities" tools={<Tag>4 facilities</Tag>}>
+          <Panel title="Managed facilities" tools={<Tag>3 facilities</Tag>}>
             <table className="facility-table">
               <thead>
                 <tr>
@@ -249,18 +255,18 @@ export function BuildingPage() {
               </thead>
               <tbody>
                 {FACILITIES.map((f) => {
-                  const isSelected = f.name === selectedName
+                  const isSelected = f.id === selectedId
                   return (
                     <tr
-                      key={f.name}
+                      key={f.id}
                       className={`facility-row ${isSelected ? 'selected-row' : ''}`.trim()}
-                      onClick={() => setSelectedName(f.name)}
+                      onClick={() => setSelectedId(f.id)}
                       tabIndex={0}
                       aria-selected={isSelected}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          setSelectedName(f.name)
+                          setSelectedId(f.id)
                         }
                       }}
                     >
@@ -288,7 +294,7 @@ export function BuildingPage() {
               <div
                 className="pie-chart"
                 role="img"
-                aria-label="Franklin Street Center 38 percent, North Point Offices 28 percent, Harbor Exchange 20 percent, Riverside Works 14 percent"
+                aria-label="730 Border St. 45 percent, North Point Offices 33 percent, 1725 Hyde Park Ave 22 percent"
               >
                 <span>
                   $8,460
