@@ -1,7 +1,7 @@
 # Commonwatt
 
 ## Deployed App
-Link: [https://commonwatt.vercel.app/](https://commonwatt.vercel.app/) \
+Link: [https://commonwatt.vercel.app/](https://commonwatt.vercel.app/)
 > Keep the grid up without leaning on the same neighborhoods twice.
 
 ## Track
