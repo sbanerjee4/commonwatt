@@ -1,10 +1,10 @@
-# CommonWatt
+# Commonwatt
 
 **An equity-constrained demand-response planner for the grid — an AI proposes, a human approves, and no neighborhood gets asked twice.**
 
 🔗 **Live demo:** [commonwatt.vercel.app](https://commonwatt.vercel.app/) · **Track:** Climate · **Built end-to-end with [Kiro](https://kiro.dev)**
 
-> On a peak heat day the grid strains, and utilities have two bad options: fire up a fossil peaker plant, or shed load on neighborhoods — and that burden has historically fallen hardest on low-income and environmental-justice communities. CommonWatt makes demand response *fair and auditable*: it asks buildings to voluntarily reduce load, leans on the ones that can most afford it, spares the ones a reduction would hurt most, pays participants, and leaves every decision to a human operator.
+> On a peak heat day the grid strains, and utilities have two bad options: fire up a fossil peaker plant, or shed load on neighborhoods — and that burden has historically fallen hardest on low-income and environmental-justice communities. Commonwatt makes demand response *fair and auditable*: it asks buildings to voluntarily reduce load, leans on the ones that can most afford it, spares the ones a reduction would hurt most, pays participants, and leaves every decision to a human operator.
 
 ---
 
@@ -53,11 +53,11 @@ Sign in at `/signin` (passwords are demo-only):
 
 ## Built with Kiro
 
-CommonWatt was built **spec-first** with Kiro, across the whole dev lifecycle:
+Commonwatt was built **spec-first** with Kiro, across the whole dev lifecycle:
 
 - **Spec-driven development** — requirements, design, and tasks were committed to `.kiro/specs/` *before* implementation. Every feature traces to an acceptance criterion; working from the task list let the team build auth, map, equity dispatch, and chat/handoff in parallel without collisions.
 - **Steering as guardrails** — `.kiro/steering/{safety,provenance,stack}.md` are rules the agent never crossed: every user-facing number carries a `source_id`, no message may say "cut" / "shut off" / "curtail" / "disconnect" (it's a *voluntary, paid* program), and generated code stays on the chosen stack.
-- **MCP (Model Context Protocol)** — the heart of the app is the **CommonWatt MCP server**: 11 deterministic, property-tested tools (FastMCP). The *same* server Kiro called during development is what the running planner/critic call at runtime — so results are reproducible, explainable, and auditable, with no model calls hidden inside the tools.
+- **MCP (Model Context Protocol)** — the heart of the app is the **Commonwatt MCP server**: 11 deterministic, property-tested tools (FastMCP). The *same* server Kiro called during development is what the running planner/critic call at runtime — so results are reproducible, explainable, and auditable, with no model calls hidden inside the tools.
 - **Agent hooks** — ran the property-based test suite on every save, so a broken equity invariant was caught the instant it appeared rather than in the demo.
 - **Property-based testing** — spec invariants became Hypothesis properties (see [below](#tests)).
 - **Skills** — the BERDO + Census data-wrangling workflow was crystallized into a reusable Kiro skill for fast re-seeding.
@@ -78,7 +78,7 @@ CommonWatt was built **spec-first** with Kiro, across the whole dev lifecycle:
                                    └───────────────────────┬───────────────┘
                                                             │ tool calls (MCP)
                                    ┌───────────────────────▼───────────────┐
-                                   │ server/  CommonWatt MCP server          │
+                                   │ server/  Commonwatt MCP server          │
                                    │  11 deterministic, property-tested tools│
                                    └───────────────────────┬───────────────┘
                                                             │ reads
@@ -104,7 +104,7 @@ CommonWatt was built **spec-first** with Kiro, across the whole dev lifecycle:
 | API | FastAPI (Python 3.12), Pydantic, Uvicorn |
 | Auth | bcrypt password hashing, HTTP-only `cw_session` cookie (`SameSite=None; Secure` cross-site) |
 | Agents | Claude via Amazon Bedrock — planner, critic, and building-chat, tool-grounded |
-| Tools | CommonWatt MCP server (FastMCP) — 11 deterministic tools |
+| Tools | Commonwatt MCP server (FastMCP) — 11 deterministic tools |
 | Persistence | SQLAlchemy 2.0 ORM + Alembic; SQLite (dev) / PostgreSQL (prod) |
 | Data | Committed public fixtures: BERDO buildings, Census ACS income, Census geocodes |
 | Testing | pytest + Hypothesis (property-based) + Vitest; 61 backend tests |
