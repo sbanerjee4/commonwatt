@@ -223,6 +223,17 @@ export function BuildingPage() {
     queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${buildingId}`),
   })
 
+  // Does this building actually have an active (approved) event? Drives whether
+  // the event-request card + "asked to reduce" banner show at all. event_id ===
+  // null means no active event — then we show a calm "no request" state instead
+  // of a stale static request card.
+  const inbox = useQuery({
+    queryKey: ['inbox', buildingId],
+    queryFn: () => apiGet<{ event_id: number | null }>(`/inbox/${buildingId}`),
+    retry: false,
+  })
+  const hasActiveEvent = inbox.data ? inbox.data.event_id !== null : false
+
   const profile = building.data
   const load =
     profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : '420 kW'
@@ -341,16 +352,32 @@ export function BuildingPage() {
             <small>SRC-MTR-220</small>
           </div>
           <div className="ask-status yes">
-            <span className="status-symbol">!</span>
+            <span className="status-symbol">{hasActiveEvent ? '!' : '✓'}</span>
             <span>
-              <b>Asked to reduce today</b>
-              <small>5–7 PM · Reply by 3:30 PM</small>
+              {hasActiveEvent ? (
+                <>
+                  <b>Asked to reduce today</b>
+                  <small>5–7 PM · Reply by 3:30 PM</small>
+                </>
+              ) : (
+                <>
+                  <b>No active request</b>
+                  <small>You'll be notified here when the utility asks.</small>
+                </>
+              )}
             </span>
           </div>
         </section>
 
         <div className="account-grid">
           <Panel title="Current event request">
+            {!hasActiveEvent ? (
+              <p className="caption" style={{ padding: 'var(--space-4)' }}>
+                No active event for this facility right now. When the utility approves an event that
+                includes this building, the request and your reply options will appear here.
+              </p>
+            ) : (
+            <>
             <div className="request-explainer">
               The utility is asking whether your building can voluntarily use less electricity from
               5–7 PM. You choose whether to participate.
@@ -400,6 +427,8 @@ export function BuildingPage() {
                 ✓ Reply submitted: <strong>{reply === 'offer' ? '250 kW offered' : reply.toUpperCase()}</strong>
                 <span>Confirmation REP-841 · Simulated</span>
               </div>
+            )}
+            </>
             )}
           </Panel>
           <Panel title="Participation history" tools={<span className="total-paid">Total event earnings <b>$8,460</b></span>}>
