@@ -27,6 +27,7 @@ from app.deps import current_user, require_role
 from app.routes._chat_agent import agent_reply_or_fallback, build_event_context
 from app.routes._chat_helpers import (
     call_history_for,
+    current_plan_building,
     get_or_create_thread,
     open_event_for_building,
     post_message,
@@ -35,6 +36,7 @@ from app.routes._chat_helpers import (
 from db.models import AuditLog, Message, Reply, User
 from notify.templates import _contains_forbidden
 from notify.validation import parse_reply_body
+from server.tools import estimate_savings
 
 router = APIRouter()
 
@@ -61,9 +63,30 @@ async def get_thread(
     ).scalars().all()
     event = open_event_for_building(db, building_id)
     thread = thread_for(db, event.id, building_id) if event is not None else None
+
+    # Real event ask + estimated payment for this building (replaces hardcoded
+    # UI literals). requested_kw comes from the building's row in the current
+    # plan version; est_payment from estimate_savings on that shed (labeled
+    # estimated — never invented). None when there is no active event.
+    requested_kw = None
+    est_payment_usd = None
+    window_label = event.window_label if event is not None else None
+    if event is not None:
+        pb = current_plan_building(db, event, building_id)
+        if pb is not None and pb.kw_requested:
+            requested_kw = round(pb.kw_requested, 1)
+            sav = estimate_savings(shed_mw=pb.kw_requested / 1000.0)
+            for c in sav.get("counters", []):
+                if c.get("key") == "paid_to_buildings":
+                    est_payment_usd = c.get("value_usd")
+                    break
+
     return {
         "building_id": building_id,
         "event_id": event.id if event else None,
+        "window_label": window_label,
+        "requested_kw": requested_kw,
+        "est_payment_usd": est_payment_usd,
         "handoff_mode": thread.handoff_mode if thread else "auto",
         "needs_human": bool(thread.needs_human) if thread else False,
         "messages": [

@@ -198,14 +198,23 @@ export function BuildingPage() {
   // of a stale static request card.
   const inbox = useQuery({
     queryKey: ['inbox', buildingId],
-    queryFn: () => apiGet<{ event_id: number | null }>(`/inbox/${buildingId}`),
+    queryFn: () => apiGet<{ event_id: number | null; window_label: string | null; requested_kw: number | null; est_payment_usd: number | null }>(`/inbox/${buildingId}`),
     retry: false,
   })
   const hasActiveEvent = inbox.data ? inbox.data.event_id !== null : false
+  const eventWindow = inbox.data?.window_label ?? '5–7 PM'
+  const requestedKw = inbox.data?.requested_kw ?? null
+  const estPayment = inbox.data?.est_payment_usd ?? null
 
   const profile = building.data
   const load =
     profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : '420 kW'
+  // Simulated recent peak load, derived from the real curtailable load
+  // (curtailable ≈ 15% of peak), so it varies per building and is labeled.
+  const recentLoad =
+    profile?.curtailable_load_kw != null
+      ? `${Math.round((profile.curtailable_load_kw / 0.15) / 10) * 10} kW`
+      : '—'
 
   return (
     <div className="workspace">
@@ -317,7 +326,7 @@ export function BuildingPage() {
             <span>
               Recent load <Tag>Simulated</Tag>
             </span>
-            <strong>1,284 kW</strong>
+            <strong>{recentLoad}</strong>
             <small>SRC-MTR-220</small>
           </div>
           <div className="ask-status yes">
@@ -326,7 +335,7 @@ export function BuildingPage() {
               {hasActiveEvent ? (
                 <>
                   <b>Asked to reduce today</b>
-                  <small>5–7 PM · Reply by 3:30 PM</small>
+                  <small>{eventWindow}{requestedKw != null ? ` · ${requestedKw.toLocaleString()} kW` : ''}</small>
                 </>
               ) : (
                 <>
@@ -348,22 +357,22 @@ export function BuildingPage() {
             ) : (
             <>
             <div className="request-explainer">
-              The utility is asking whether your building can voluntarily use less electricity from
-              5–7 PM. You choose whether to participate.
+              The utility is asking whether your building can voluntarily use less electricity during
+              the {eventWindow} window. You choose whether to participate.
             </div>
             <div className="live-number">
               <span>Asked to reduce by</span>
-              <strong>320 kW</strong>
-              <small>Estimate from Event plan #2048</small>
+              <strong>{requestedKw != null ? `${requestedKw.toLocaleString()} kW` : '—'}</strong>
+              <small>From the approved event plan</small>
             </div>
             <p className="why">
               <strong>Why this building?</strong>
               Your building has available capacity, and this event stays within the neighborhood equity cap.
             </p>
             <div className="payment">
-              <span>Expected event earnings</span>
-              <strong>$1,120</strong>
-              <small>320 kW × event rate; finalized after meter verification</small>
+              <span>Expected event earnings <Tag>Estimated</Tag></span>
+              <strong>{estPayment != null ? `$${estPayment.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</strong>
+              <small>{requestedKw != null ? `${requestedKw.toLocaleString()} kW × program rate` : 'Program rate'}; finalized after meter verification</small>
             </div>
             <fieldset>
               <legend>Your reply</legend>
