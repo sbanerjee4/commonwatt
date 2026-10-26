@@ -13,9 +13,46 @@ from app.routes import admin, auth, chat, portfolio, push
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _maybe_migrate_on_startup()
     init_db()
     _maybe_seed_on_startup()
     yield
+
+
+def _maybe_migrate_on_startup() -> None:
+    """Optionally run Alembic migrations to head at boot.
+
+    Render's free tier has no Shell and no preDeployCommand, so `alembic upgrade
+    head` never runs after a deploy — leaving the live DB's SCHEMA behind the
+    code. That is how the deployed `messages.sender_role` CHECK constraint stayed
+    at the old set (no 'agent'), making every automated-agent reply 500 on
+    Postgres. When COMMONWATT_SEED_ON_STARTUP is truthy we upgrade to head here,
+    BEFORE seeding (the seed assumes the current schema). Idempotent: Alembic
+    no-ops when already at head. A failure is logged but never blocks startup.
+    """
+    import logging
+    import os
+
+    flag = os.environ.get("COMMONWATT_SEED_ON_STARTUP", "").strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return
+    log = logging.getLogger("uvicorn.error")
+    try:
+        from pathlib import Path
+
+        from alembic import command
+        from alembic.config import Config
+
+        # alembic.ini lives at the repo root (one level above app/).
+        ini = Path(__file__).resolve().parent.parent / "alembic.ini"
+        cfg = Config(str(ini))
+        # script_location in alembic.ini is repo-relative; make it absolute so
+        # the upgrade works regardless of the process CWD.
+        cfg.set_main_option("script_location", str(ini.parent / "db" / "migrations"))
+        command.upgrade(cfg, "head")
+        log.info("Startup migration completed (alembic upgrade head).")
+    except Exception:  # noqa: BLE001 — never let a migration error crash the service
+        log.exception("Startup migration failed; continuing (schema may be stale).")
 
 
 def _maybe_seed_on_startup() -> None:
