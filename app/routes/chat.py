@@ -103,6 +103,40 @@ async def get_thread(
     }
 
 
+@router.get("/events/active-buildings", tags=["chat"])
+async def active_buildings(
+    db=Depends(get_db),
+    user: User = Depends(require_role("utility")),
+):
+    """Building ids that currently have an active (approved) event conversation.
+
+    Used by the operator's 'active only' filter so they can see at a glance which
+    facilities actually have a live thread. A building is active when it is in an
+    approved event's CURRENT plan version and that thread isn't closed.
+    """
+    from db.models import Event, PlanBuilding, Thread
+
+    ids: set[str] = set()
+    for event in db.execute(
+        select(Event).where(Event.status == "approved")
+    ).scalars():
+        pbs = db.execute(
+            select(PlanBuilding.building_id).where(
+                PlanBuilding.event_id == event.id,
+                PlanBuilding.plan_version == event.current_version,
+            )
+        ).scalars().all()
+        for bid in pbs:
+            thread = db.execute(
+                select(Thread).where(
+                    Thread.event_id == event.id, Thread.building_id == bid
+                )
+            ).scalar_one_or_none()
+            if thread is None or thread.closed_at is None:
+                ids.add(bid)
+    return {"building_ids": sorted(ids)}
+
+
 @router.get("/inbox/{building_id}/unread", tags=["chat"])
 async def unread_count(
     building_id: str,
