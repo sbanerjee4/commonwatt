@@ -16,8 +16,6 @@ type BuildingProfile = {
   [key: string]: unknown
 }
 
-type ChatTurn = { role: 'you' | 'assistant'; text: string }
-
 type InboxMessage = {
   id: number
   event_id: number | null
@@ -36,23 +34,26 @@ type InboxResponse = {
 }
 
 const SENDER_LABEL: Record<InboxMessage['sender_role'], string> = {
-  operator: 'Operator',
-  agent: 'Assistant',
+  operator: 'Utility operator',
+  agent: 'Utility operator',
   building_manager: 'You',
-  system: 'System',
+  system: 'Utility operator',
 }
 
-// Live event inbox: polls GET /inbox/{buildingId} every few seconds so an
-// operator message sent from another machine appears here within seconds
-// without a page reload (the backend is built for this — see app/routes/chat.py).
-// The manager replies via POST /inbox/{buildingId}/reply.
+// Single unified conversation between the building manager and the utility.
+// By default an automated agent answers (posted as sender_role 'agent') but the
+// manager sees ONE voice — "Utility operator" — for the agent, the human
+// operator, and system notices, so the AI appears to speak on the operator's
+// behalf. "Talk to a human" flips the thread to human mode (request-human); the
+// operator then picks up (operator-message) and the agent stays silent. Polls
+// GET /inbox/{id} every 4s so operator/agent messages appear without a reload.
 function EventInbox({ buildingId }: { buildingId: string }) {
   const [input, setInput] = useState('')
 
   const inbox = useQuery({
     queryKey: ['inbox', buildingId],
     queryFn: () => apiGet<InboxResponse>(`/inbox/${buildingId}`),
-    refetchInterval: 4000, // poll every 4s for new operator/agent messages
+    refetchInterval: 4000,
     refetchIntervalInBackground: true,
   })
 
@@ -65,6 +66,11 @@ function EventInbox({ buildingId }: { buildingId: string }) {
     },
   })
 
+  const requestHuman = useMutation({
+    mutationFn: () => apiPost<{ ok: boolean }>(`/inbox/${buildingId}/request-human`, {}),
+    onSuccess: () => inbox.refetch(),
+  })
+
   const send = () => {
     const body = input.trim()
     if (!body || reply.isPending) return
@@ -73,15 +79,26 @@ function EventInbox({ buildingId }: { buildingId: string }) {
 
   const messages = inbox.data?.messages ?? []
   const noEvent = inbox.data && inbox.data.event_id === null
+  const humanMode = inbox.data?.handoff_mode === 'human' || inbox.data?.needs_human
+
+  const suggestions = [
+    'What is my building and how much could we reduce?',
+    'Why was I asked today?',
+    'How is my payment estimated?',
+  ]
 
   return (
     <Panel
-      title="Event messages"
-      tools={<Tag tone={messages.length ? 'attention' : ''}>{messages.length ? 'Live' : 'No event'}</Tag>}
+      title="Conversation with the utility"
+      tools={
+        <Tag tone={humanMode ? 'attention' : ''}>
+          {noEvent ? 'No event' : humanMode ? 'A representative has joined' : 'Assisted'}
+        </Tag>
+      }
     >
       <p className="request-explainer">
-        Messages from your utility operator about today’s event appear here live. Replies are
-        recorded against the event.
+        Message the utility about today’s event. You’ll get an immediate answer; ask for a person any
+        time and a representative takes over. Answers are grounded in your building’s real data.
       </p>
 
       <div className="chat-thread" aria-live="polite">
@@ -90,6 +107,15 @@ function EventInbox({ buildingId }: { buildingId: string }) {
         )}
         {!inbox.isError && noEvent && (
           <p className="caption">No active event for your building right now.</p>
+        )}
+        {!inbox.isError && !noEvent && messages.length === 0 && (
+          <div className="chat-suggestions">
+            {suggestions.map((s) => (
+              <button type="button" key={s} className="ui-button ghost" onClick={() => setInput(s)}>
+                {s}
+              </button>
+            ))}
+          </div>
         )}
         {messages.map((m) => (
           <div
@@ -100,13 +126,28 @@ function EventInbox({ buildingId }: { buildingId: string }) {
             <p>{m.body}</p>
           </div>
         ))}
+        {reply.isPending && (
+          <div className="chat-message assistant"><span>Utility operator</span><p>Typing…</p></div>
+        )}
       </div>
+
+      {!noEvent && !humanMode && (
+        <button
+          type="button"
+          className="ui-button ghost"
+          onClick={() => requestHuman.mutate()}
+          disabled={requestHuman.isPending}
+          style={{ alignSelf: 'flex-start', marginBottom: 'var(--space-2)' }}
+        >
+          {requestHuman.isPending ? 'Requesting…' : 'Talk to a human representative'}
+        </button>
+      )}
 
       <div className="chat-composer">
         <input
           type="text"
           value={input}
-          placeholder={noEvent ? 'No active event' : 'Reply to the operator…'}
+          placeholder={noEvent ? 'No active event' : 'Type a message…'}
           disabled={!!noEvent}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') send() }}
@@ -115,79 +156,7 @@ function EventInbox({ buildingId }: { buildingId: string }) {
           Send
         </button>
       </div>
-    </Panel>
-  )
-}
-
-function BuildingChat({ buildingId }: { buildingId: string }) {
-  const [turns, setTurns] = useState<ChatTurn[]>([])
-  const [input, setInput] = useState('')
-
-  const ask = useMutation({
-    mutationFn: (message: string) =>
-      apiPost<{ buildingId: string; reply: string }>(
-        `/portfolio/building/${buildingId}/chat`,
-        { message },
-        { 'X-Role': 'building_manager' },
-      ),
-    onSuccess: (data) => {
-      setTurns((t) => [...t, { role: 'assistant', text: data.reply }])
-    },
-  })
-
-  const send = () => {
-    const msg = input.trim()
-    if (!msg || ask.isPending) return
-    setTurns((t) => [...t, { role: 'you', text: msg }])
-    setInput('')
-    ask.mutate(msg)
-  }
-
-  const suggestions = [
-    'What is my building and how much could we reduce?',
-    'Why was I asked today?',
-    'How is my payment estimated?',
-  ]
-
-  return (
-    <Panel title="Ask the Commonwatt assistant">
-      <p className="request-explainer">
-        Ask about your building, your energy use, or today’s request. The assistant reads your
-        building’s real data and never invents numbers.
-      </p>
-
-      <div className="chat-thread" aria-live="polite">
-        {turns.length === 0 && (
-          <div className="chat-suggestions">
-            {suggestions.map((s) => (
-              <button type="button" key={s} className="ui-button ghost" onClick={() => { setInput(s) }}>
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-        {turns.map((t, i) => (
-          <div key={i} className={`chat-message ${t.role === 'you' ? 'user' : 'assistant'}`}>
-            <span>{t.role === 'you' ? 'You' : 'Assistant'}</span>
-            <p>{t.text}</p>
-          </div>
-        ))}
-        {ask.isPending && <div className="chat-message assistant"><span>Assistant</span><p>Thinking…</p></div>}
-        {ask.isError && <p className="caption">Could not reach the assistant. Is `make serve` running with a Bedrock key?</p>}
-      </div>
-
-      <div className="chat-composer">
-        <input
-          type="text"
-          value={input}
-          placeholder="Type a question…"
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') send() }}
-        />
-        <button className="ui-button primary" onClick={send} disabled={ask.isPending}>
-          Send
-        </button>
-      </div>
+      {reply.isError && <p className="caption">Could not send. Please try again.</p>}
     </Panel>
   )
 }
@@ -463,7 +432,6 @@ export function BuildingPage() {
             </table>
           </Panel>
           <EventInbox buildingId={buildingId} />
-          <BuildingChat buildingId={buildingId} />
         </div>
       </main>
     </div>
