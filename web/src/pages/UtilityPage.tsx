@@ -451,14 +451,25 @@ function ConversationsPanel() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [activeOnly, setActiveOnly] = useState(false)
 
   const buildings = useQuery({
     queryKey: ['all-buildings-convos'],
     queryFn: () => apiGet<AllBuildingsResponse>('/portfolio/buildings'),
   })
 
+  // Which buildings actually have a live (approved-event) conversation.
+  const active = useQuery({
+    queryKey: ['active-buildings'],
+    queryFn: () => apiGet<{ building_ids: string[] }>('/events/active-buildings'),
+    refetchInterval: 10000,
+  })
+  const activeSet = new Set(active.data?.building_ids ?? [])
+  const activeCount = activeSet.size
+
   const term = search.trim().toLowerCase()
   const facilities = (buildings.data?.buildings ?? []).filter((b) => {
+    if (activeOnly && !activeSet.has(b.buildingId)) return false
     if (!term) return true
     const address = b.address.toLowerCase()
     const id = b.buildingId.toLowerCase()
@@ -500,6 +511,14 @@ function ConversationsPanel() {
               placeholder="Search by address or building id"
               onChange={(e) => setSearch(e.target.value)}
             />
+            <label className="convos-active-toggle">
+              <input
+                type="checkbox"
+                checked={activeOnly}
+                onChange={(e) => setActiveOnly(e.target.checked)}
+              />
+              Show active conversations only{activeCount ? ` (${activeCount})` : ''}
+            </label>
           </div>
 
           {buildings.isLoading && <p className="caption">Loading facilities…</p>}

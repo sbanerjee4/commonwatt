@@ -603,3 +603,7 @@ legend { margin-bottom: var(--space-2); font-size: .72rem; font-weight: var(--we
   .recruitment-body { grid-template-columns: 1fr; }
   .recruitment-table-wrap { border-right: 0; border-bottom: 1px solid var(--color-line); }
 }
+
+/* Operator conversations: active-only filter toggle (horizontal, not a grid label). */
+.convos-active-toggle { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-ink); cursor: pointer; }
+.convos-active-toggle input { width: auto; min-height: 0; }

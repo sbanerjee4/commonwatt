@@ -57,21 +57,23 @@ def _maybe_rebuild_db_on_startup() -> None:
 
 
 def _maybe_reconcile_schema_on_startup() -> None:
-    """Idempotently reconcile schema drift the live DB can't self-heal.
+    """Idempotently reconcile CHECK-constraint drift the live DB can't self-heal.
 
     The deployed Postgres was bootstrapped by ``init_db()`` (create_all) on an
     OLDER model and never migrated (Render free tier has no Shell/preDeploy and
     the DB carries no ``alembic_version`` stamp, so ``alembic upgrade head``
     restarts at 0001 and collides with the existing tables). create_all never
-    ALTERs an existing table, so the ``messages.sender_role`` CHECK constraint
-    stayed at its old set — without 'agent' — and every automated-agent chat
-    reply 500s with a CheckViolation.
+    ALTERs an existing table, so every enum-style CHECK constraint stayed at its
+    old value set — e.g. ``messages.sender_role`` without 'agent' and
+    ``audit_log.action`` without the chat_* actions — and each new value 500s
+    with a CheckViolation the moment the chat/handoff flow writes it.
 
-    Rather than fight Alembic's version chain, we fix the one thing that is
-    actually wrong: drop and recreate that CHECK to match the current model's
-    allowed roles. Idempotent (safe every boot), Postgres-only (SQLite enforces
-    these loosely and create_all already builds the current constraint locally),
-    gated by COMMONWATT_SEED_ON_STARTUP, and failure-tolerant.
+    Rather than fight Alembic's version chain (or rely on the destructive
+    rebuild flag), we drop and recreate each drifting CHECK to match the current
+    model's allowed set. Idempotent (safe every boot), Postgres-only (SQLite
+    enforces these loosely and create_all already builds the current constraints
+    locally), gated by COMMONWATT_SEED_ON_STARTUP, and failure-tolerant per
+    constraint so one failure never blocks the rest or crashes startup.
     """
     import logging
     import os
@@ -84,30 +86,31 @@ def _maybe_reconcile_schema_on_startup() -> None:
     from sqlalchemy import text
 
     from app.db import engine
-    from db.models import MESSAGE_SENDER_ROLES
+    from db.models import AUDIT_ACTIONS, EVENT_STATUSES, MESSAGE_SENDER_ROLES, REPLY_KINDS
 
     # Only meaningful on Postgres; SQLite's create_all already has it right.
     if engine.dialect.name != "postgresql":
         return
 
-    allowed = ", ".join(f"'{r}'" for r in MESSAGE_SENDER_ROLES)
-    try:
-        with engine.begin() as conn:
-            conn.execute(
-                text("ALTER TABLE messages DROP CONSTRAINT IF EXISTS ck_messages_sender_role_allowed")
-            )
-            conn.execute(
-                text("ALTER TABLE messages DROP CONSTRAINT IF EXISTS sender_role_allowed")
-            )
-            conn.execute(
-                text(
-                    f"ALTER TABLE messages ADD CONSTRAINT ck_messages_sender_role_allowed "
-                    f"CHECK (sender_role IN ({allowed}))"
+    # (table, column, canonical constraint name, legacy alias name, allowed values)
+    checks = [
+        ("messages", "sender_role", "ck_messages_sender_role_allowed", "sender_role_allowed", MESSAGE_SENDER_ROLES),
+        ("audit_log", "action", "ck_audit_log_action_allowed", "action_allowed", AUDIT_ACTIONS),
+        ("replies", "kind", "ck_replies_kind_allowed", "kind_allowed", REPLY_KINDS),
+        ("events", "status", "ck_events_status_allowed", "status_allowed", EVENT_STATUSES),
+    ]
+    for table, column, cname, alias, values in checks:
+        allowed = ", ".join(f"'{v}'" for v in values)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {cname}"))
+                conn.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {alias}"))
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD CONSTRAINT {cname} CHECK ({column} IN ({allowed}))")
                 )
-            )
-        log.info("Startup schema reconcile: messages.sender_role CHECK set to (%s).", allowed)
-    except Exception:  # noqa: BLE001 — never let a reconcile error crash the service
-        log.exception("Startup schema reconcile failed; continuing (schema may be stale).")
+            log.info("Startup reconcile: %s.%s CHECK set to (%s).", table, column, allowed)
+        except Exception:  # noqa: BLE001 — per-constraint; never block the rest or crash startup
+            log.exception("Startup reconcile of %s.%s failed; continuing.", table, column)
 
 
 def _maybe_seed_on_startup() -> None:
