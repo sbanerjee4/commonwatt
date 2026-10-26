@@ -60,18 +60,21 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
   const data = thread.data
   const messages = data?.messages ?? []
   const humanRequested = data ? data.handoff_mode === 'human' || data.needs_human : false
+  const noActiveEvent = data ? data.event_id === null : false
 
   return (
     <div className="conversations-thread">
       <div className="panel-head">
         <strong>{title ?? buildingId}</strong>
-        <button
-          className="ui-button ghost"
-          onClick={() => close.mutate()}
-          disabled={close.isPending}
-        >
-          Close thread
-        </button>
+        {!noActiveEvent && (
+          <button
+            className="ui-button ghost"
+            onClick={() => close.mutate()}
+            disabled={close.isPending}
+          >
+            Close thread
+          </button>
+        )}
       </div>
 
       {humanRequested && (
@@ -84,7 +87,13 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
         {thread.isError && (
           <p className="caption">Could not load this conversation. Make sure you are signed in.</p>
         )}
-        {!thread.isError && messages.length === 0 && (
+        {!thread.isError && noActiveEvent && (
+          <p className="caption">
+            This building has no active event, so there is no conversation yet. Approve an event that
+            includes this building to open a thread and contact its manager.
+          </p>
+        )}
+        {!thread.isError && !noActiveEvent && messages.length === 0 && (
           <p className="caption">No messages yet.</p>
         )}
         {messages.map((m) => (
@@ -101,7 +110,8 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
       <div className="chat-composer">
         <textarea
           value={body}
-          placeholder="Message the building manager…"
+          placeholder={noActiveEvent ? 'No active event — approve one to message this building' : 'Message the building manager…'}
+          disabled={noActiveEvent}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -110,7 +120,7 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
             }
           }}
         />
-        <button className="ui-button primary" onClick={onSend} disabled={send.isPending}>
+        <button className="ui-button primary" onClick={onSend} disabled={send.isPending || noActiveEvent}>
           Send
         </button>
       </div>

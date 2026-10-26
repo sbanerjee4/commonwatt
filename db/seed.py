@@ -309,16 +309,91 @@ def seed_demo_event(session: Session) -> None:
     session.commit()
 
 
+def seed_all_buildings(session: Session) -> None:
+    """Seed EVERY BERDO building (and its zip) into the DB.
+
+    The planner ranks a portfolio over the full in-memory dataset
+    (``server.data.load_buildings`` — ~2k buildings), but approve persists
+    ``plan_buildings`` / ``call_history`` / ``threads`` rows that FK to the
+    ``buildings`` table. If only the 3 demo buildings are in that table, approve
+    hits a foreign-key violation the moment the planner picks any other building.
+    So the DB's ``buildings`` universe must match the planner's: we upsert every
+    building here, plus each building's zip (buildings.zip FKs to zips.zip) and a
+    zip_utility row tying it to the placeholder utility.
+
+    Idempotent and bulk-oriented: existing ids are skipped, so re-running is
+    cheap. Enrollment/capacity stay simulated; buildings carry ``simulated=True``.
+    """
+    from server.data import load_buildings
+
+    _enable_sqlite_foreign_keys(session)
+    records = load_buildings()
+
+    # --- zips: one row per distinct building zip, tied to the placeholder utility
+    existing_zips = set(session.execute(select(Zip.zip)).scalars())
+    seen_zips: set[str] = set()
+    for b in records:
+        z = b.zip
+        if not z or z in seen_zips or z in existing_zips:
+            continue
+        seen_zips.add(z)
+        session.add(Zip(zip=z, ej=bool(b.is_ej), ej_source_id=None,
+                        centroid_lng=None, centroid_lat=None))
+    session.flush()
+
+    existing_zu = set(session.execute(select(ZipUtility.zip)).scalars())
+    for z in sorted(seen_zips | existing_zips):
+        if z in existing_zu:
+            continue
+        session.add(ZipUtility(zip=z, utility_id=PLACEHOLDER_UTILITY_ID,
+                              town=None, source_id=PLACEHOLDER_SOURCE_ID))
+    session.flush()
+
+    # --- buildings: insert any not already present (the 3 placeholders already are)
+    existing_bids = set(session.execute(select(Building.id)).scalars())
+    added = 0
+    for b in records:
+        if b.building_id in existing_bids:
+            continue
+        if not b.zip:
+            continue  # buildings.zip is NOT NULL + FKs to zips; skip zip-less rows
+        lng, lat = (b.lng_lat or (None, None))
+        session.add(Building(
+            id=b.building_id,
+            zip=b.zip,
+            address=b.address or "Unknown",
+            property_type=b.property_type,
+            gross_area_sf=b.gross_area_sf,
+            site_eui=b.site_eui_kbtuft2,
+            per_electricity=b.per_electricity,
+            lng=lng,
+            lat=lat,
+            geocode_status="geocoded" if b.lng_lat else None,
+            enrolled=False,
+            enrolled_capacity_kw=None,
+            offered_capacity_kw=None,
+            protected=bool(b.is_protected),
+            protected_reason=None,
+            protected_kind=None,
+            simulated=True,
+        ))
+        added += 1
+    session.commit()
+    print(f"Seeded {added} additional BERDO buildings into the DB (total universe now matches the planner).")
+
+
 def main() -> None:
     """Seed the database named by DATABASE_URL (default: local SQLite file)."""
     with SessionLocal() as session:
         seed_placeholder_territory(session)
+        seed_all_buildings(session)
         seed_demo_accounts(session)
         seed_demo_event(session)
     print(
         "Seeded demo territory (real BERDO buildings 129860/114120/100901 and "
-        "zips 02128/02132/02136), demo accounts, and a demo approved event with "
-        "a chat thread target. Enrollment and capacity are simulated."
+        "zips 02128/02132/02136), all BERDO buildings for planner FK integrity, "
+        "demo accounts, and a demo approved event with a chat thread target. "
+        "Enrollment and capacity are simulated."
     )
 
 

@@ -16,8 +16,6 @@ type BuildingProfile = {
   [key: string]: unknown
 }
 
-type ChatTurn = { role: 'you' | 'assistant'; text: string }
-
 type InboxMessage = {
   id: number
   event_id: number | null
@@ -36,23 +34,26 @@ type InboxResponse = {
 }
 
 const SENDER_LABEL: Record<InboxMessage['sender_role'], string> = {
-  operator: 'Operator',
-  agent: 'Assistant',
+  operator: 'Utility operator',
+  agent: 'Utility operator',
   building_manager: 'You',
-  system: 'System',
+  system: 'Utility operator',
 }
 
-// Live event inbox: polls GET /inbox/{buildingId} every few seconds so an
-// operator message sent from another machine appears here within seconds
-// without a page reload (the backend is built for this — see app/routes/chat.py).
-// The manager replies via POST /inbox/{buildingId}/reply.
+// Single unified conversation between the building manager and the utility.
+// By default an automated agent answers (posted as sender_role 'agent') but the
+// manager sees ONE voice — "Utility operator" — for the agent, the human
+// operator, and system notices, so the AI appears to speak on the operator's
+// behalf. "Talk to a human" flips the thread to human mode (request-human); the
+// operator then picks up (operator-message) and the agent stays silent. Polls
+// GET /inbox/{id} every 4s so operator/agent messages appear without a reload.
 function EventInbox({ buildingId }: { buildingId: string }) {
   const [input, setInput] = useState('')
 
   const inbox = useQuery({
     queryKey: ['inbox', buildingId],
     queryFn: () => apiGet<InboxResponse>(`/inbox/${buildingId}`),
-    refetchInterval: 4000, // poll every 4s for new operator/agent messages
+    refetchInterval: 4000,
     refetchIntervalInBackground: true,
   })
 
@@ -65,6 +66,11 @@ function EventInbox({ buildingId }: { buildingId: string }) {
     },
   })
 
+  const requestHuman = useMutation({
+    mutationFn: () => apiPost<{ ok: boolean }>(`/inbox/${buildingId}/request-human`, {}),
+    onSuccess: () => inbox.refetch(),
+  })
+
   const send = () => {
     const body = input.trim()
     if (!body || reply.isPending) return
@@ -73,15 +79,26 @@ function EventInbox({ buildingId }: { buildingId: string }) {
 
   const messages = inbox.data?.messages ?? []
   const noEvent = inbox.data && inbox.data.event_id === null
+  const humanMode = inbox.data?.handoff_mode === 'human' || inbox.data?.needs_human
+
+  const suggestions = [
+    'What is my building and how much could we reduce?',
+    'Why was I asked today?',
+    'How is my payment estimated?',
+  ]
 
   return (
     <Panel
-      title="Event messages"
-      tools={<Tag tone={messages.length ? 'attention' : ''}>{messages.length ? 'Live' : 'No event'}</Tag>}
+      title="Conversation with the utility"
+      tools={
+        <Tag tone={humanMode ? 'attention' : ''}>
+          {noEvent ? 'No event' : humanMode ? 'A representative has joined' : 'Assisted'}
+        </Tag>
+      }
     >
       <p className="request-explainer">
-        Messages from your utility operator about today’s event appear here live. Replies are
-        recorded against the event.
+        Message the utility about today’s event. You’ll get an immediate answer; ask for a person any
+        time and a representative takes over. Answers are grounded in your building’s real data.
       </p>
 
       <div className="chat-thread" aria-live="polite">
@@ -90,6 +107,15 @@ function EventInbox({ buildingId }: { buildingId: string }) {
         )}
         {!inbox.isError && noEvent && (
           <p className="caption">No active event for your building right now.</p>
+        )}
+        {!inbox.isError && !noEvent && messages.length === 0 && (
+          <div className="chat-suggestions">
+            {suggestions.map((s) => (
+              <button type="button" key={s} className="ui-button ghost" onClick={() => setInput(s)}>
+                {s}
+              </button>
+            ))}
+          </div>
         )}
         {messages.map((m) => (
           <div
@@ -100,13 +126,28 @@ function EventInbox({ buildingId }: { buildingId: string }) {
             <p>{m.body}</p>
           </div>
         ))}
+        {reply.isPending && (
+          <div className="chat-message assistant"><span>Utility operator</span><p>Typing…</p></div>
+        )}
       </div>
+
+      {!noEvent && !humanMode && (
+        <button
+          type="button"
+          className="ui-button ghost"
+          onClick={() => requestHuman.mutate()}
+          disabled={requestHuman.isPending}
+          style={{ alignSelf: 'flex-start', marginBottom: 'var(--space-2)' }}
+        >
+          {requestHuman.isPending ? 'Requesting…' : 'Talk to a human representative'}
+        </button>
+      )}
 
       <div className="chat-composer">
         <input
           type="text"
           value={input}
-          placeholder={noEvent ? 'No active event' : 'Reply to the operator…'}
+          placeholder={noEvent ? 'No active event' : 'Type a message…'}
           disabled={!!noEvent}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') send() }}
@@ -115,79 +156,7 @@ function EventInbox({ buildingId }: { buildingId: string }) {
           Send
         </button>
       </div>
-    </Panel>
-  )
-}
-
-function BuildingChat({ buildingId }: { buildingId: string }) {
-  const [turns, setTurns] = useState<ChatTurn[]>([])
-  const [input, setInput] = useState('')
-
-  const ask = useMutation({
-    mutationFn: (message: string) =>
-      apiPost<{ buildingId: string; reply: string }>(
-        `/portfolio/building/${buildingId}/chat`,
-        { message },
-        { 'X-Role': 'building_manager' },
-      ),
-    onSuccess: (data) => {
-      setTurns((t) => [...t, { role: 'assistant', text: data.reply }])
-    },
-  })
-
-  const send = () => {
-    const msg = input.trim()
-    if (!msg || ask.isPending) return
-    setTurns((t) => [...t, { role: 'you', text: msg }])
-    setInput('')
-    ask.mutate(msg)
-  }
-
-  const suggestions = [
-    'What is my building and how much could we reduce?',
-    'Why was I asked today?',
-    'How is my payment estimated?',
-  ]
-
-  return (
-    <Panel title="Ask the Commonwatt assistant">
-      <p className="request-explainer">
-        Ask about your building, your energy use, or today’s request. The assistant reads your
-        building’s real data and never invents numbers.
-      </p>
-
-      <div className="chat-thread" aria-live="polite">
-        {turns.length === 0 && (
-          <div className="chat-suggestions">
-            {suggestions.map((s) => (
-              <button type="button" key={s} className="ui-button ghost" onClick={() => { setInput(s) }}>
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-        {turns.map((t, i) => (
-          <div key={i} className={`chat-message ${t.role === 'you' ? 'user' : 'assistant'}`}>
-            <span>{t.role === 'you' ? 'You' : 'Assistant'}</span>
-            <p>{t.text}</p>
-          </div>
-        ))}
-        {ask.isPending && <div className="chat-message assistant"><span>Assistant</span><p>Thinking…</p></div>}
-        {ask.isError && <p className="caption">Could not reach the assistant. Is `make serve` running with a Bedrock key?</p>}
-      </div>
-
-      <div className="chat-composer">
-        <input
-          type="text"
-          value={input}
-          placeholder="Type a question…"
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') send() }}
-        />
-        <button className="ui-button primary" onClick={send} disabled={ask.isPending}>
-          Send
-        </button>
-      </div>
+      {reply.isError && <p className="caption">Could not send. Please try again.</p>}
     </Panel>
   )
 }
@@ -223,9 +192,29 @@ export function BuildingPage() {
     queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${buildingId}`),
   })
 
+  // Does this building actually have an active (approved) event? Drives whether
+  // the event-request card + "asked to reduce" banner show at all. event_id ===
+  // null means no active event — then we show a calm "no request" state instead
+  // of a stale static request card.
+  const inbox = useQuery({
+    queryKey: ['inbox', buildingId],
+    queryFn: () => apiGet<{ event_id: number | null; window_label: string | null; requested_kw: number | null; est_payment_usd: number | null }>(`/inbox/${buildingId}`),
+    retry: false,
+  })
+  const hasActiveEvent = inbox.data ? inbox.data.event_id !== null : false
+  const eventWindow = inbox.data?.window_label ?? '5–7 PM'
+  const requestedKw = inbox.data?.requested_kw ?? null
+  const estPayment = inbox.data?.est_payment_usd ?? null
+
   const profile = building.data
   const load =
     profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : '420 kW'
+  // Simulated recent peak load, derived from the real curtailable load
+  // (curtailable ≈ 15% of peak), so it varies per building and is labeled.
+  const recentLoad =
+    profile?.curtailable_load_kw != null
+      ? `${Math.round((profile.curtailable_load_kw / 0.15) / 10) * 10} kW`
+      : '—'
 
   return (
     <div className="workspace">
@@ -337,37 +326,53 @@ export function BuildingPage() {
             <span>
               Recent load <Tag>Simulated</Tag>
             </span>
-            <strong>1,284 kW</strong>
+            <strong>{recentLoad}</strong>
             <small>SRC-MTR-220</small>
           </div>
           <div className="ask-status yes">
-            <span className="status-symbol">!</span>
+            <span className="status-symbol">{hasActiveEvent ? '!' : '✓'}</span>
             <span>
-              <b>Asked to reduce today</b>
-              <small>5–7 PM · Reply by 3:30 PM</small>
+              {hasActiveEvent ? (
+                <>
+                  <b>Asked to reduce today</b>
+                  <small>{eventWindow}{requestedKw != null ? ` · ${requestedKw.toLocaleString()} kW` : ''}</small>
+                </>
+              ) : (
+                <>
+                  <b>No active request</b>
+                  <small>You'll be notified here when the utility asks.</small>
+                </>
+              )}
             </span>
           </div>
         </section>
 
         <div className="account-grid">
           <Panel title="Current event request">
+            {!hasActiveEvent ? (
+              <p className="caption" style={{ padding: 'var(--space-4)' }}>
+                No active event for this facility right now. When the utility approves an event that
+                includes this building, the request and your reply options will appear here.
+              </p>
+            ) : (
+            <>
             <div className="request-explainer">
-              The utility is asking whether your building can voluntarily use less electricity from
-              5–7 PM. You choose whether to participate.
+              The utility is asking whether your building can voluntarily use less electricity during
+              the {eventWindow} window. You choose whether to participate.
             </div>
             <div className="live-number">
               <span>Asked to reduce by</span>
-              <strong>320 kW</strong>
-              <small>Estimate from Event plan #2048</small>
+              <strong>{requestedKw != null ? `${requestedKw.toLocaleString()} kW` : '—'}</strong>
+              <small>From the approved event plan</small>
             </div>
             <p className="why">
               <strong>Why this building?</strong>
               Your building has available capacity, and this event stays within the neighborhood equity cap.
             </p>
             <div className="payment">
-              <span>Expected event earnings</span>
-              <strong>$1,120</strong>
-              <small>320 kW × event rate; finalized after meter verification</small>
+              <span>Expected event earnings <Tag>Estimated</Tag></span>
+              <strong>{estPayment != null ? `$${estPayment.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</strong>
+              <small>{requestedKw != null ? `${requestedKw.toLocaleString()} kW × program rate` : 'Program rate'}; finalized after meter verification</small>
             </div>
             <fieldset>
               <legend>Your reply</legend>
@@ -400,6 +405,8 @@ export function BuildingPage() {
                 ✓ Reply submitted: <strong>{reply === 'offer' ? '250 kW offered' : reply.toUpperCase()}</strong>
                 <span>Confirmation REP-841 · Simulated</span>
               </div>
+            )}
+            </>
             )}
           </Panel>
           <Panel title="Participation history" tools={<span className="total-paid">Total event earnings <b>$8,460</b></span>}>
@@ -434,7 +441,6 @@ export function BuildingPage() {
             </table>
           </Panel>
           <EventInbox buildingId={buildingId} />
-          <BuildingChat buildingId={buildingId} />
         </div>
       </main>
     </div>
