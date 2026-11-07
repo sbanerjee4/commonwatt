@@ -66,26 +66,26 @@ Commonwatt was built **spec-first** with Kiro, across the whole dev lifecycle:
 ## Architecture
 
 ```
-┌─────────────────────┐   HTTP (cookie auth)   ┌──────────────────────┐
-│  React 18 SPA (web/)│ ─────────────────────▶ │  FastAPI  (app/)     │
-│  MapLibre · TanStack│ ◀───────────────────── │  routes: portfolio,  │
-└─────────────────────┘      JSON (sourced)     │  auth, chat, push    │
+┌───────────────────────┐   HTTP (cookie auth)   ┌──────────────────────┐
+│  React 18 SPA (web/)  │ ─────────────────────▶ │  FastAPI  (app/)     │
+│  MapLibre · TanStack  │ ◀───────────────────── │  routes: portfolio,  │
+└───────────────────────┘      JSON (sourced)    │  auth, chat, push    │
                                                  └──────────┬───────────┘
-                                   planner / critic loop     │ calls
-                                   ┌───────────────────────▼───────────────┐
+                                   planner / critic loop    │ calls
+                                   ┌────────────────────────▼───────────────┐
                                    │ agent/  (Claude via Amazon Bedrock)    │
-                                   │  planner → critic → self-correct       │
-                                   └───────────────────────┬───────────────┘
+                                   │ planner → critic → self-correct        │
+                                   └────────────────────────┬───────────────┘
                                                             │ tool calls (MCP)
-                                   ┌───────────────────────▼───────────────┐
-                                   │ server/  Commonwatt MCP server          │
-                                   │  11 deterministic, property-tested tools│
-                                   └───────────────────────┬───────────────┘
+                                   ┌────────────────────────▼───────────────┐
+                                   │ server/  Commonwatt MCP server         │
+                                   │ 11 deterministic, property-tested tools│
+                                   └────────────────────────┬───────────────┘
                                                             │ reads
-                                   ┌───────────────────────▼───────────────┐
+                                   ┌────────────────────────▼───────────────┐
                                    │ fixtures/berdo.json  + Census ACS      │
-                                   │  (committed public data; runs offline) │
-                                   └─────────────────────────────────────────┘
+                                   │ (committed public data; runs offline)  │
+                                   └────────────────────────────────────────┘
        state: SQLAlchemy 2.0 ORM + Alembic migrations · SQLite (dev) / Postgres (prod)
 ```
 
