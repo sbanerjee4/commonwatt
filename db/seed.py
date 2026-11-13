@@ -60,6 +60,11 @@ PLACEHOLDER_PROTECTED_REASON = (
     "Simulated demo flag: this building is marked protected for the demo only."
 )
 
+# building1@demo manages 125 High Street (office, non-EJ 02110): the planner's
+# top pick at any target, so an operator-approved event always reaches the demo
+# facility account. Seeded by seed_all_buildings like every BERDO building.
+DEMO_FACILITY_BUILDING_ID = "cw-e802f28be5"
+
 # --- DEMO-ONLY credentials (task 1.5). Plaintext lives here for the README and
 # the demo login only. The database stores bcrypt hashes, never these strings.
 DEMO_UTILITY_PASSWORD = "demo-utility-pass"
@@ -67,7 +72,7 @@ DEMO_BUILDING_PASSWORD = "demo-building-pass"
 # (email, plaintext password, role, utility_id, building_id)
 DEMO_ACCOUNTS: tuple[tuple[str, str, str, str | None, str | None], ...] = (
     ("utility@demo", DEMO_UTILITY_PASSWORD, "utility", PLACEHOLDER_UTILITY_ID, None),
-    ("building1@demo", DEMO_BUILDING_PASSWORD, "building_manager", None, PLACEHOLDER_BUILDING_IDS[0]),
+    ("building1@demo", DEMO_BUILDING_PASSWORD, "building_manager", None, DEMO_FACILITY_BUILDING_ID),
     ("building2@demo", DEMO_BUILDING_PASSWORD, "building_manager", None, PLACEHOLDER_BUILDING_IDS[1]),
     ("building3@demo", DEMO_BUILDING_PASSWORD, "building_manager", None, PLACEHOLDER_BUILDING_IDS[2]),
 )

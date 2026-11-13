@@ -45,9 +45,15 @@ Sign in at `/signin` (passwords are demo-only):
 | Role | Email | Password | Lands on |
 | ---- | ----- | -------- | -------- |
 | Utility operator | `utility@demo` | `demo-utility-pass` | Operator workspace — map, planner, approvals, facility conversations |
-| Building manager | `building1@demo` | `demo-building-pass` | That building's event + conversation |
+| Building manager | `building1@demo` | `demo-building-pass` | 125 High Street — today's request: accept, offer less, or decline |
 | Building manager | `building2@demo` | `demo-building-pass` | " |
 | Building manager | `building3@demo` | `demo-building-pass` | " |
+
+**Demo flow (about 2 minutes):**
+
+1. As `utility@demo`, set the reduction you need and click **Find buildings**. Review where the burden lands, then **Approve & send requests**.
+2. As `building1@demo`, review the request (earnings, what it takes, why you) and accept, offer less, or decline. Offers above the ask or the building's capacity are rejected.
+3. As `utility@demo`, see the replies under **Responses and confirmation** and click **Confirm event**. Run **Find buildings** again: 125 High Street now rests for one event.
 
 > Cold-start note: the backend runs on a free Render instance that sleeps after idle, so the first request after a quiet period may take ~30–60s to wake.
 

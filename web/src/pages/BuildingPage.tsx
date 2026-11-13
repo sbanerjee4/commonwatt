@@ -1,238 +1,397 @@
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
-import { apiGet, apiPost } from '../lib/api'
+import { apiGet, apiPost, ApiError } from '../lib/api'
+import { plainText } from '../lib/chat'
+import { siteTypeFor } from '../lib/grouping'
 import { getIdentity } from '../lib/session'
 
 type BuildingProfile = {
   building_id?: string
   address?: string
   zip?: string
-  property_type?: string
-  gross_area_sf?: number
+  property_type?: string | null
   curtailable_load_kw?: number | null
   load_basis?: string
+  is_ej?: boolean
+  affluence_tier?: string
+  is_commercial?: boolean
   source_id?: string
-  [key: string]: unknown
 }
+
+type Decision = { kind: 'yes' | 'no' | 'counter' | 'offer'; kw: number | null }
 
 type InboxMessage = {
   id: number
-  event_id: number | null
   sender_role: 'operator' | 'agent' | 'building_manager' | 'system'
-  sender_user_id: number | null
   body: string
-  created_at: string | null
 }
 
 type InboxResponse = {
-  building_id: string
   event_id: number | null
+  window_label: string | null
+  requested_kw: number | null
+  est_payment_usd: number | null
+  capacity_kw: number | null
+  decision: Decision | null
+  confirmed: boolean
   handoff_mode: 'auto' | 'human'
   needs_human: boolean
   messages: InboxMessage[]
 }
 
-const SENDER_LABEL: Record<InboxMessage['sender_role'], string> = {
-  operator: 'Utility operator',
-  agent: 'Utility operator',
-  building_manager: 'You',
-  system: 'Utility operator',
+const kw = (n: number) => `${Math.round(n).toLocaleString()} kW`
+const usd = (n: number) => `$${Math.round(n).toLocaleString()}`
+
+// Typical measures by site type. Shown as guidance, not a prescription — the
+// facility's own engineer decides how to deliver the reduction.
+const MEASURES: Record<string, string> = {
+  Office: 'Raise cooling setpoints 2–3°F, dim non-essential lighting, pause EV charging.',
+  Retail: 'Raise cooling setpoint ~2°F, dim back-of-house and display lighting.',
+  Warehouse: 'Shift charging and non-urgent equipment out of the window.',
+  'Industrial / Plant': 'Shift non-urgent process loads out of the window.',
+  Residential: 'Pre-cool common areas beforehand, dim common-area lighting. No changes inside units.',
+  Education: 'Defer non-critical loads only; occupied spaces stay comfortable.',
+  Healthcare: 'Defer non-critical loads only; clinical systems are never touched.',
+  Lab: 'Defer non-critical loads only; lab safety systems are never touched.',
+  Other: 'Raise cooling setpoints slightly and dim non-essential lighting.',
 }
 
-// Single unified conversation between the building manager and the utility.
-// By default an automated agent answers (posted as sender_role 'agent') but the
-// manager sees ONE voice — "Utility operator" — for the agent, the human
-// operator, and system notices, so the AI appears to speak on the operator's
-// behalf. "Talk to a human" flips the thread to human mode (request-human); the
-// operator then picks up (operator-message) and the agent stays silent. Polls
-// GET /inbox/{id} every 4s so operator/agent messages appear without a reload.
-function EventInbox({ buildingId }: { buildingId: string }) {
-  const [input, setInput] = useState('')
+function whyThisBuilding(p: BuildingProfile | undefined): string {
+  if (!p) return 'Your building has flexible capacity for this window.'
+  const parts: string[] = []
+  if (p.is_commercial) parts.push('a commercial site, so a reduction lands on operations, not residents')
+  if (p.affluence_tier === 'high') parts.push('in a higher-income area')
+  if (p.is_ej === false) parts.push('outside an Environmental Justice zip')
+  if (parts.length === 0) return 'Your building has flexible capacity, and this event stays within the neighborhood equity cap.'
+  return `Your building is ${parts.join(', ')}. The utility asks sites like yours first so lower-income neighborhoods are spared.`
+}
+
+function decisionLabel(d: Decision): string {
+  if (d.kind === 'no') return 'You declined this event.'
+  if (d.kind === 'yes') return `You accepted ${kw(d.kw ?? 0)}.`
+  return `You offered ${kw(d.kw ?? 0)}.`
+}
+
+// The main screen for a facility manager: one request, one decision.
+function DecisionCard({ buildingId, profile }: { buildingId: string; profile?: BuildingProfile }) {
+  const qc = useQueryClient()
+  const [mode, setMode] = useState<'choose' | 'counter'>('choose')
+  const [counterKw, setCounterKw] = useState('')
+  const [editing, setEditing] = useState(false)
 
   const inbox = useQuery({
     queryKey: ['inbox', buildingId],
     queryFn: () => apiGet<InboxResponse>(`/inbox/${buildingId}`),
     refetchInterval: 4000,
-    refetchIntervalInBackground: true,
+    retry: false,
   })
 
-  const reply = useMutation({
-    mutationFn: (body: string) =>
-      apiPost<{ ok: boolean }>(`/inbox/${buildingId}/reply`, { body }),
+  const decide = useMutation({
+    mutationFn: (body: { decision: 'accept' | 'decline' | 'counter'; kw?: number }) =>
+      apiPost<{ ok: boolean }>(`/inbox/${buildingId}/decision`, body),
     onSuccess: () => {
-      setInput('')
-      inbox.refetch()
+      setMode('choose')
+      setEditing(false)
+      qc.invalidateQueries({ queryKey: ['inbox', buildingId] })
     },
   })
 
-  const requestHuman = useMutation({
-    mutationFn: () => apiPost<{ ok: boolean }>(`/inbox/${buildingId}/request-human`, {}),
-    onSuccess: () => inbox.refetch(),
-  })
-
-  const send = () => {
-    const body = input.trim()
-    if (!body || reply.isPending) return
-    reply.mutate(body)
+  const data = inbox.data
+  if (inbox.isError) {
+    return (
+      <Panel title="Today’s request">
+        <p className="decision-empty">Could not load your request. Make sure you are signed in.</p>
+      </Panel>
+    )
+  }
+  if (!data) {
+    return (
+      <Panel title="Today’s request">
+        <p className="decision-empty">Loading…</p>
+      </Panel>
+    )
+  }
+  if (data.event_id === null || data.requested_kw == null) {
+    return (
+      <Panel title="Today’s request" tools={<Tag>No request</Tag>}>
+        <p className="decision-empty">
+          No request right now. When the utility needs a reduction and your building is a good fit,
+          the request, your estimated earnings, and your options appear here.
+        </p>
+      </Panel>
+    )
   }
 
-  const messages = inbox.data?.messages ?? []
-  const noEvent = inbox.data && inbox.data.event_id === null
-  const humanMode = inbox.data?.handoff_mode === 'human' || inbox.data?.needs_human
+  const requested = data.requested_kw
+  const capacity = data.capacity_kw ?? requested
+  const ceiling = Math.min(requested, capacity)
+  const ratePerKw = data.est_payment_usd != null ? data.est_payment_usd / requested : null
+  const earn = (k: number) => (ratePerKw != null ? usd(ratePerKw * k) : '—')
+  // Simulated typical peak: curtailable capacity is ~15% of peak load.
+  const typicalPeak = profile?.curtailable_load_kw ? profile.curtailable_load_kw / 0.15 : null
+  const share = (k: number) => (typicalPeak ? Math.round((100 * k) / typicalPeak) : null)
+  const measures = MEASURES[siteTypeFor(profile?.property_type ?? null)] ?? MEASURES.Other
 
-  const suggestions = [
-    'What is my building and how much could we reduce?',
-    'Why was I asked today?',
-    'How is my payment estimated?',
-  ]
+  const counterNum = Number(counterKw)
+  const counterError =
+    counterKw === ''
+      ? null
+      : !Number.isFinite(counterNum) || counterNum <= 0
+        ? 'Enter an amount above 0 kW.'
+        : counterNum >= ceiling
+          ? `Must be below ${kw(ceiling)}, the amount asked. To commit the full amount, accept instead.`
+          : null
+  const serverError = decide.error instanceof ApiError ? decide.error.message : null
+
+  const decided = data.decision && !editing
+  // Tiles follow the amount in play: the sent offer, the offer being typed, or the full ask.
+  const offered = decided && data.decision?.kind === 'counter' ? data.decision.kw : null
+  const shown = offered ?? (mode === 'counter' && counterKw !== '' && !counterError ? counterNum : requested)
+  const pct = share(shown)
 
   return (
     <Panel
-      title="Conversation with the utility"
+      title="Today’s request"
+      className="decision-card"
       tools={
-        <Tag tone={humanMode ? 'attention' : ''}>
-          {noEvent ? 'No event' : humanMode ? 'A representative has joined' : 'Assisted'}
-        </Tag>
+        data.confirmed ? <Tag>Confirmed by utility</Tag>
+          : decided ? <Tag>Awaiting utility confirmation</Tag>
+          : <Tag tone="attention">Reply needed</Tag>
       }
     >
-      <p className="request-explainer">
-        Message the utility about today’s event. You’ll get an immediate answer; ask for a person any
-        time and a representative takes over. Answers are grounded in your building’s real data.
+      <div className="decision-ask">
+        <span>The utility asks you to reduce</span>
+        <strong>{kw(requested)}</strong>
+        <small>{data.window_label} · voluntary and paid</small>
+      </div>
+
+      <div className="decision-facts">
+        <div>
+          <span>You’d earn <Tag>Estimated</Tag></span>
+          <b>{earn(shown)}</b>
+          <small>Program rate × kW delivered; finalized after meter verification.</small>
+        </div>
+        <div>
+          <span>What it takes</span>
+          <b>{pct != null ? `≈${pct}% of typical peak` : kw(shown)}</b>
+          <small>{measures}</small>
+        </div>
+        <div>
+          <span>Why you</span>
+          <small>{whyThisBuilding(profile)}</small>
+        </div>
+      </div>
+
+      <p className="decision-capacity">
+        Your enrolled capacity is <b>{kw(capacity)}</b>.{' '}
+        {requested < capacity
+          ? `The utility only needs ${kw(requested)} from you to reach its target.`
+          : 'This request uses your full enrolled capacity.'}{' '}
+        You can’t commit more than you’re able to deliver.
       </p>
 
-      <div className="chat-thread" aria-live="polite">
-        {inbox.isError && (
-          <p className="caption">Could not load messages. Make sure you are signed in.</p>
-        )}
-        {!inbox.isError && noEvent && (
-          <p className="caption">No active event for your building right now.</p>
-        )}
-        {!inbox.isError && !noEvent && messages.length === 0 && (
-          <div className="chat-suggestions">
-            {suggestions.map((s) => (
-              <button type="button" key={s} className="ui-button ghost" onClick={() => setInput(s)}>
-                {s}
+      {decided && data.decision ? (
+        <div className={`decision-result ${data.confirmed ? 'confirmed' : ''}`}>
+          <b>{decisionLabel(data.decision)}</b>
+          <span>
+            {data.confirmed
+              ? data.decision.kind === 'no'
+                ? 'The utility confirmed the event without your building.'
+                : 'The utility confirmed the event. Thank you.'
+              : 'The utility will confirm the event once enough buildings have replied.'}
+          </span>
+          {!data.confirmed && (
+            <button type="button" className="ui-button ghost" onClick={() => setEditing(true)}>
+              Change reply
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="decision-actions">
+          {mode === 'choose' ? (
+            <>
+              <button className="ui-button primary" disabled={decide.isPending}
+                onClick={() => decide.mutate({ decision: 'accept' })}>
+                Accept {kw(requested)}
               </button>
-            ))}
-          </div>
-        )}
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`chat-message ${m.sender_role === 'building_manager' ? 'user' : 'assistant'}`}
-          >
-            <span>{SENDER_LABEL[m.sender_role]}</span>
-            <p>{m.body}</p>
-          </div>
-        ))}
-        {reply.isPending && (
-          <div className="chat-message assistant"><span>Utility operator</span><p>Typing…</p></div>
-        )}
-      </div>
-
-      {!noEvent && !humanMode && (
-        <button
-          type="button"
-          className="ui-button ghost"
-          onClick={() => requestHuman.mutate()}
-          disabled={requestHuman.isPending}
-          style={{ alignSelf: 'flex-start', marginBottom: 'var(--space-2)' }}
-        >
-          {requestHuman.isPending ? 'Requesting…' : 'Talk to a human representative'}
-        </button>
+              <button className="ui-button secondary" onClick={() => setMode('counter')}>
+                Offer less
+              </button>
+              <button className="ui-button ghost" disabled={decide.isPending}
+                onClick={() => decide.mutate({ decision: 'decline' })}>
+                Decline
+              </button>
+            </>
+          ) : (
+            <div className="counter-form">
+              <label>
+                I can reduce (kW)
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.max(1, Math.floor(ceiling) - 1)}
+                  value={counterKw}
+                  placeholder={`Up to ${Math.max(1, Math.floor(ceiling) - 1).toLocaleString()}`}
+                  onChange={(e) => setCounterKw(e.target.value)}
+                  aria-invalid={!!counterError}
+                />
+              </label>
+              {counterError && <p className="field-error">{counterError}</p>}
+              <div className="counter-buttons">
+                <button
+                  className="ui-button primary"
+                  disabled={decide.isPending || counterKw === '' || !!counterError}
+                  onClick={() => decide.mutate({ decision: 'counter', kw: counterNum })}
+                >
+                  Send offer{counterKw && !counterError ? ` · ${earn(counterNum)}` : ''}
+                </button>
+                <button className="ui-button ghost" onClick={() => { setMode('choose'); setCounterKw('') }}>
+                  Back
+                </button>
+              </div>
+            </div>
+          )}
+          {serverError && <p className="field-error">{serverError}</p>}
+        </div>
       )}
-
-      <div className="chat-composer">
-        <input
-          type="text"
-          value={input}
-          placeholder={noEvent ? 'No active event' : 'Type a message…'}
-          disabled={!!noEvent}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') send() }}
-        />
-        <button className="ui-button primary" onClick={send} disabled={reply.isPending || !!noEvent}>
-          Send
-        </button>
-      </div>
-      {reply.isError && <p className="caption">Could not send. Please try again.</p>}
     </Panel>
   )
 }
 
-// Managed-facilities portfolio. STATIC: there is no multi-facility or
-// per-facility-earnings endpoint, so these mirror the design mock. The selected
-// facility's status card below reads the real /portfolio/buildings/{id}.
-// Facility rows map to REAL seeded building ids so selecting one loads that
-// building's real profile/inbox. The first row is the signed-in building (it
-// carries the demo event); the others are the other seeded demo buildings.
-const FACILITIES = [
-  { id: '129860', name: '730 Border St.', town: 'Boston', status: 'Request today', tone: 'attention', capacityKw: 420, earnings: '$3,214' },
-  { id: '114120', name: 'North Point Offices', town: 'Cambridge', status: 'Available', tone: '', capacityKw: 310, earnings: '$2,408' },
-  { id: '100901', name: '1725 Hyde Park Ave', town: 'Boston', status: 'Available', tone: '', capacityKw: 275, earnings: '$1,692' },
+// Supporting assistant: collapsed by default, short answers, one voice
+// ("Utility operator") for the agent and a human rep.
+function AskPanel({ buildingId }: { buildingId: string }) {
+  const [open, setOpen] = useState(false)
+  const [input, setInput] = useState('')
+  const qc = useQueryClient()
+
+  const inbox = useQuery({
+    queryKey: ['inbox', buildingId],
+    queryFn: () => apiGet<InboxResponse>(`/inbox/${buildingId}`),
+    refetchInterval: 4000,
+    retry: false,
+  })
+  const reply = useMutation({
+    mutationFn: (body: string) => apiPost<{ ok: boolean }>(`/inbox/${buildingId}/reply`, { body }),
+    onSuccess: () => {
+      setInput('')
+      qc.invalidateQueries({ queryKey: ['inbox', buildingId] })
+    },
+  })
+  const requestHuman = useMutation({
+    mutationFn: () => apiPost<{ ok: boolean }>(`/inbox/${buildingId}/request-human`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inbox', buildingId] }),
+  })
+
+  if (!inbox.data || inbox.data.event_id === null) return null
+  const messages = inbox.data.messages
+  const humanMode = inbox.data.handoff_mode === 'human' || inbox.data.needs_human
+  const send = (text: string) => {
+    const body = text.trim()
+    if (body && !reply.isPending) reply.mutate(body)
+  }
+
+  return (
+    <section className="ask-panel">
+      <button type="button" className="ask-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>Questions about this request?</span>
+        <small>{humanMode ? 'A representative has joined' : 'Ask the utility · instant answers'}</small>
+      </button>
+      {open && (
+        <div className="ask-body">
+          <div className="ask-suggestions">
+            {['Why was my building asked?', 'How is my payment estimated?', 'What if we deliver less?'].map((s) => (
+              <button type="button" key={s} className="ui-button secondary" onClick={() => send(s)}>
+                {s}
+              </button>
+            ))}
+          </div>
+          {messages.length > 0 && (
+            <div className="ask-thread" aria-live="polite">
+              {messages.map((m) => (
+                <p key={m.id} className={m.sender_role === 'building_manager' ? 'me' : ''}>
+                  <span>{m.sender_role === 'building_manager' ? 'You' : 'Utility'}</span>
+                  {plainText(m.body)}
+                </p>
+              ))}
+              {reply.isPending && <p><span>Utility</span>Typing…</p>}
+            </div>
+          )}
+          <div className="chat-composer">
+            <input
+              type="text"
+              value={input}
+              placeholder="Ask a question…"
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') send(input) }}
+            />
+            <button className="ui-button primary" onClick={() => send(input)} disabled={reply.isPending}>
+              Ask
+            </button>
+          </div>
+          {!humanMode && (
+            <button type="button" className="text-link ask-human" onClick={() => requestHuman.mutate()}
+              disabled={requestHuman.isPending}>
+              Talk to a person instead
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// Portfolio + history: useful context, but secondary to today's decision.
+// STATIC demo values (no multi-facility or per-facility earnings endpoint).
+const HISTORY = [
+  ['Aug 14', 'Accepted', '301 kW', '$1,054'],
+  ['Jul 27', 'Accepted', '288 kW', '$1,008'],
+  ['Jul 09', 'Declined', '—', '$0'],
+  ['Jun 18', 'Offered 250 kW', '242 kW', '$847'],
 ] as const
 
-const EARNINGS_LEGEND = [
-  { key: 'one', name: '730 Border St.', pct: '45%' },
-  { key: 'two', name: 'North Point Offices', pct: '33%' },
-  { key: 'three', name: '1725 Hyde Park Ave', pct: '22%' },
-] as const
+function HistorySection() {
+  return (
+    <details className="history-section">
+      <summary>Participation history and season earnings <Tag>Simulated</Tag></summary>
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Reply</th><th>Delivered</th><th>Earnings</th></tr>
+        </thead>
+        <tbody>
+          {HISTORY.map((row) => (
+            <tr key={row[0]}>
+              {row.map((cell, i) => <td className={i > 1 ? 'mono' : ''} key={i}>{cell}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="caption">Season total $2,909 before facility operating costs.</p>
+    </details>
+  )
+}
 
 export function BuildingPage() {
-  const [reply, setReply] = useState<'yes' | 'no' | 'offer'>('yes')
-  const [submitted, setSubmitted] = useState(false)
-  // Selected facility drives which REAL building's data is loaded. Default to
-  // the signed-in building when it matches a row, else the first row.
-  const signedInId = getIdentity()?.buildingId ?? null
-  const defaultFacility = FACILITIES.find((f) => f.id === signedInId) ?? FACILITIES[0]
-  const [selectedId, setSelectedId] = useState<string>(defaultFacility.id)
-  const selectedFacility = FACILITIES.find((f) => f.id === selectedId) ?? FACILITIES[0]
-  const selectedName = selectedFacility.name
-
-  // All building-scoped queries follow the SELECTED facility's real id.
-  const buildingId = selectedId
-
+  const buildingId = getIdentity()?.buildingId ?? ''
   const building = useQuery({
     queryKey: ['building', buildingId],
     queryFn: () => apiGet<BuildingProfile>(`/portfolio/buildings/${buildingId}`),
+    enabled: !!buildingId,
   })
-
-  // Does this building actually have an active (approved) event? Drives whether
-  // the event-request card + "asked to reduce" banner show at all. event_id ===
-  // null means no active event — then we show a calm "no request" state instead
-  // of a stale static request card.
-  const inbox = useQuery({
-    queryKey: ['inbox', buildingId],
-    queryFn: () => apiGet<{ event_id: number | null; window_label: string | null; requested_kw: number | null; est_payment_usd: number | null }>(`/inbox/${buildingId}`),
-    retry: false,
-  })
-  const hasActiveEvent = inbox.data ? inbox.data.event_id !== null : false
-  const eventWindow = inbox.data?.window_label ?? '5–7 PM'
-  const requestedKw = inbox.data?.requested_kw ?? null
-  const estPayment = inbox.data?.est_payment_usd ?? null
-
-  const profile = building.data
-  const load =
-    profile?.curtailable_load_kw != null ? `${profile.curtailable_load_kw.toLocaleString()} kW` : '420 kW'
-  // Simulated recent peak load, derived from the real curtailable load
-  // (curtailable ≈ 15% of peak), so it varies per building and is labeled.
-  const recentLoad =
-    profile?.curtailable_load_kw != null
-      ? `${Math.round((profile.curtailable_load_kw / 0.15) / 10) * 10} kW`
-      : '—'
+  const name = building.data?.address ?? 'Your facility'
 
   return (
     <div className="workspace">
-      <AppHeader context={selectedName} />
-      <main className="account">
+      <AppHeader context={name} />
+      <main className="account decision-page">
         <div className="dashboard-title">
           <div>
-            <p className="kicker">Facility manager account</p>
-            <Heading level={1}>Your facility portfolio.</Heading>
-            <p>Manage event participation and earnings across four properties.</p>
+            <p className="kicker">Facility manager</p>
+            <Heading level={1}>{name}</Heading>
+            {building.data?.property_type && <p>{building.data.property_type} · zip {building.data.zip}</p>}
           </div>
-          <Tag>Simulated data</Tag>
+          <Tag>Simulated enrollment</Tag>
         </div>
 
         {building.isError && (
@@ -242,212 +401,9 @@ export function BuildingPage() {
           </p>
         )}
 
-        <div className="portfolio-grid">
-          <Panel title="Managed facilities" tools={<Tag>3 facilities</Tag>}>
-            <table className="facility-table">
-              <thead>
-                <tr>
-                  <th>Facility</th>
-                  <th>Status</th>
-                  <th>Enrolled capacity</th>
-                  <th>Season earnings</th>
-                </tr>
-              </thead>
-              <tbody>
-                {FACILITIES.map((f) => {
-                  const isSelected = f.id === selectedId
-                  return (
-                    <tr
-                      key={f.id}
-                      className={`facility-row ${isSelected ? 'selected-row' : ''}`.trim()}
-                      onClick={() => setSelectedId(f.id)}
-                      tabIndex={0}
-                      aria-selected={isSelected}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          setSelectedId(f.id)
-                        }
-                      }}
-                    >
-                      <td>
-                        <strong>{f.name}</strong>
-                        <small>{isSelected ? `Selected · ${f.town}` : f.town}</small>
-                      </td>
-                      <td>
-                        <Tag tone={f.tone}>{f.status}</Tag>
-                      </td>
-                      <td className="mono">{f.capacityKw} kW</td>
-                      <td className="mono">{f.earnings}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </Panel>
-
-          <Panel
-            title="Event earnings by facility"
-            tools={<span className="total-paid">Season total <b>$8,460</b></span>}
-          >
-            <div className="earnings-chart">
-              <div
-                className="pie-chart"
-                role="img"
-                aria-label="730 Border St. 45 percent, North Point Offices 33 percent, 1725 Hyde Park Ave 22 percent"
-              >
-                <span>
-                  $8,460
-                  <small>total earned</small>
-                </span>
-              </div>
-              <ul className="pie-legend">
-                {EARNINGS_LEGEND.map((l) => (
-                  <li key={l.key}>
-                    <i className={`pie-key ${l.key}`} />
-                    <span>{l.name}</span>
-                    <b>{l.pct}</b>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <p className="caption">Gross event earnings before any facility operating costs.</p>
-          </Panel>
-        </div>
-
-        <div className="selected-facility">
-          <span>Selected facility</span>
-          <Heading level={2}>{selectedName}</Heading>
-        </div>
-
-        <section className="status-card">
-          <div>
-            <span>
-              Enrolled capacity <Tag>Simulated</Tag>
-            </span>
-            <strong>{load}</strong>
-            <small>{profile?.source_id ?? 'SRC-ENR-108'}</small>
-          </div>
-          <div>
-            <span>
-              Recent load <Tag>Simulated</Tag>
-            </span>
-            <strong>{recentLoad}</strong>
-            <small>SRC-MTR-220</small>
-          </div>
-          <div className="ask-status yes">
-            <span className="status-symbol">{hasActiveEvent ? '!' : '✓'}</span>
-            <span>
-              {hasActiveEvent ? (
-                <>
-                  <b>Asked to reduce today</b>
-                  <small>{eventWindow}{requestedKw != null ? ` · ${requestedKw.toLocaleString()} kW` : ''}</small>
-                </>
-              ) : (
-                <>
-                  <b>No active request</b>
-                  <small>You'll be notified here when the utility asks.</small>
-                </>
-              )}
-            </span>
-          </div>
-        </section>
-
-        <div className="account-grid">
-          <Panel title="Current event request">
-            {!hasActiveEvent ? (
-              <p className="caption" style={{ padding: 'var(--space-4)' }}>
-                No active event for this facility right now. When the utility approves an event that
-                includes this building, the request and your reply options will appear here.
-              </p>
-            ) : (
-            <>
-            <div className="request-explainer">
-              The utility is asking whether your building can voluntarily use less electricity during
-              the {eventWindow} window. You choose whether to participate.
-            </div>
-            <div className="live-number">
-              <span>Asked to reduce by</span>
-              <strong>{requestedKw != null ? `${requestedKw.toLocaleString()} kW` : '—'}</strong>
-              <small>From the approved event plan</small>
-            </div>
-            <p className="why">
-              <strong>Why this building?</strong>
-              Your building has available capacity, and this event stays within the neighborhood equity cap.
-            </p>
-            <div className="payment">
-              <span>Expected event earnings <Tag>Estimated</Tag></span>
-              <strong>{estPayment != null ? `$${estPayment.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</strong>
-              <small>{requestedKw != null ? `${requestedKw.toLocaleString()} kW × program rate` : 'Program rate'}; finalized after meter verification</small>
-            </div>
-            <fieldset>
-              <legend>Your reply</legend>
-              <div className="reply-options">
-                {(['yes', 'no', 'offer'] as const).map((option) => (
-                  <button
-                    type="button"
-                    key={option}
-                    className={reply === option ? 'reply selected' : 'reply'}
-                    onClick={() => setReply(option)}
-                    aria-pressed={reply === option}
-                  >
-                    <span className="radio-mark" />
-                    {option === 'offer' ? 'Make an offer' : option.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
-            {reply === 'offer' && (
-              <label className="offer-field">
-                Available amount (kW)
-                <input type="number" defaultValue={250} />
-              </label>
-            )}
-            <button className="ui-button primary full" onClick={() => setSubmitted(true)}>
-              Submit reply
-            </button>
-            {submitted && (
-              <div className="confirmation">
-                ✓ Reply submitted: <strong>{reply === 'offer' ? '250 kW offered' : reply.toUpperCase()}</strong>
-                <span>Confirmation REP-841 · Simulated</span>
-              </div>
-            )}
-            </>
-            )}
-          </Panel>
-          <Panel title="Participation history" tools={<span className="total-paid">Total event earnings <b>$8,460</b></span>}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Reply</th>
-                  <th>Delivered</th>
-                  <th>Earnings</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(
-                  [
-                    ['Aug 14', 'Yes', '301 kW', '$1,054'],
-                    ['Jul 27', 'Yes', '288 kW', '$1,008'],
-                    ['Jul 09', 'No', '—', '$0'],
-                    ['Jun 18', '250 kW', '242 kW', '$847'],
-                  ] as const
-                ).map((row) => (
-                  <tr key={row[0]}>
-                    {row.map((cell, i) => (
-                      <td className={i > 1 ? 'mono' : ''} key={`${row[0]}-${i}`}>
-                        {cell}
-                        {i === 2 && cell !== '—' && <Tag>Simulated</Tag>}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
-          <EventInbox buildingId={buildingId} />
-        </div>
+        {buildingId && <DecisionCard buildingId={buildingId} profile={building.data} />}
+        {buildingId && <AskPanel buildingId={buildingId} />}
+        <HistorySection />
       </main>
     </div>
   )
