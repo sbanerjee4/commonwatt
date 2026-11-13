@@ -53,3 +53,16 @@ export function closeThread(
     `/inbox/${buildingId}/close`,
   )
 }
+
+// Strip markdown the model sometimes emits (headings, bold, bullets, code
+// ticks) so agent replies render as clean plain text in the UI.
+export function plainText(body: string): string {
+  return body
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*[-*•]\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}

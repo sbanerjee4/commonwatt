@@ -117,7 +117,7 @@ class ChatSession:
         while True:
             response = self._client.messages.create(
                 model=get_model_id(),
-                max_tokens=2048,
+                max_tokens=400,
                 system=self._system_prompt(),
                 tools=CHAT_TOOLS,
                 messages=messages,

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../lib/api'
 import type { ChatMessage } from '../lib/chat'
-import { closeThread, getThread, sendOperatorMessage } from '../lib/chat'
+import { closeThread, getThread, plainText, sendOperatorMessage } from '../lib/chat'
 import { Tag } from './ui'
 
 const SENDER_LABEL: Record<ChatMessage['sender_role'], string> = {
@@ -102,7 +102,7 @@ export function ChatThread({ buildingId, title }: { buildingId: string; title?: 
             className={`chat-message ${m.sender_role === 'building_manager' ? '' : 'user'}`}
           >
             <span>{SENDER_LABEL[m.sender_role]}</span>
-            <p>{m.body}</p>
+            <p>{plainText(m.body)}</p>
           </div>
         ))}
       </div>

@@ -398,6 +398,7 @@ def plan_event(
                 "curtailable_load_kw": b.curtailable_load_kw,
                 "load_basis": b.load_basis,
                 "is_ej": b.is_ej,
+                "affluence_tier": b.affluence_tier,
             }
             for b in selected
         ],

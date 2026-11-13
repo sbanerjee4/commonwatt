@@ -81,12 +81,19 @@ async def get_thread(
                     est_payment_usd = c.get("value_usd")
                     break
 
+    from app.routes.event_flow import building_capacity_kw, is_confirmed, latest_decision
+
     return {
         "building_id": building_id,
         "event_id": event.id if event else None,
         "window_label": window_label,
         "requested_kw": requested_kw,
         "est_payment_usd": est_payment_usd,
+        # Ceiling for a counteroffer, the manager's current decision, and whether
+        # the utility has confirmed the event (drives the decision card states).
+        "capacity_kw": building_capacity_kw(building_id, requested_kw),
+        "decision": latest_decision(db, event.id, building_id) if event else None,
+        "confirmed": is_confirmed(db, event.id) if event else False,
         "handoff_mode": thread.handoff_mode if thread else "auto",
         "needs_human": bool(thread.needs_human) if thread else False,
         "messages": [

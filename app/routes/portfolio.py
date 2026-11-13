@@ -152,19 +152,43 @@ class DraftRequest(BaseModel):
 @router.post("/event/draft")
 def post_event_draft(
     req: DraftRequest,
+    db=Depends(get_db),
     user: User = Depends(require_role("utility")),
 ) -> dict[str, Any]:
     """Run the planner/critic loop. Operator-only (matches the human-gate rule)."""
     from agent.planner import run_planner  # lazy: data endpoints work without Bedrock
+    from app.routes.event_flow import (
+        ej_share_pct, neighborhood_summary, recent_burden, size_requests,
+    )
 
+    cooldown, zip_calls = recent_burden(db)
     result = run_planner(
         target_mw=req.target_mw,
         ej_cap_pct=req.ej_cap_pct,
         current_temp_f=req.current_temp_f,
+        prev_event_building_ids=cooldown,
         window_label=req.window_label,
     )
     plan = result.final_plan
+    requests = size_requests(plan.portfolio, plan.target_mw) if plan else []
+    # EJ share of the naive "rank by load only" v1 plan, for the equity contrast.
+    naive = next((getattr(s, "tool_result", None) for s in result.trace
+                  if s.kind == "plan" and getattr(s, "plan_version", None) == 1), None)
     return {
+        "equity": {
+            "cooldownExcluded": cooldown,
+            "requestedMw": round(sum(r["kw_requested"] for r in requests) / 1000, 2),
+            "requestedEjSharePct": ej_share_pct(requests),
+            "naiveEjSharePct": (naive or {}).get("ej_share_pct"),
+            "neighborhoods": neighborhood_summary(requests, zip_calls),
+            "requests": [
+                {"buildingId": r["building_id"], "address": r.get("address"),
+                 "zip": r.get("zip"), "propertyType": r.get("property_type"),
+                 "isEj": bool(r.get("is_ej")), "affluenceTier": r.get("affluence_tier"),
+                 "capacityKw": r["capacity_kw"], "kwRequested": r["kw_requested"]}
+                for r in requests
+            ],
+        },
         "approved": result.approved,
         "iterations": result.iterations,
         "criticReason": result.critic_reason,
@@ -217,11 +241,14 @@ def post_event_approve(
     from app.routes._chat_helpers import get_or_create_thread, post_message
     from db.models import AuditLog, CallHistory, Event, PlanBuilding
     from notify.push import notify_user
+    from app.routes.event_flow import recent_burden, size_requests
 
+    cooldown, _ = recent_burden(db)
     result = run_planner(
         target_mw=req.target_mw,
         ej_cap_pct=req.ej_cap_pct,
         current_temp_f=req.current_temp_f,
+        prev_event_building_ids=cooldown,
         window_label=req.window_label,
     )
     plan = result.final_plan
@@ -258,11 +285,11 @@ def post_event_approve(
     db.flush()  # assign event.id
 
     contacted: list[str] = []
-    for row in plan.portfolio:
+    for row in size_requests(plan.portfolio, plan.target_mw):
         bid = row.get("building_id")
         if not bid:
             continue
-        kw = float(row.get("curtailable_load_kw") or 0.0)
+        kw = row["kw_requested"]
         db.add(PlanBuilding(
             event_id=event.id,
             plan_version=plan.version,

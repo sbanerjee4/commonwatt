@@ -53,6 +53,8 @@ AUDIT_ACTIONS = (
     "chat_building_reply",
     "chat_operator_message",
     "chat_thread_closed",
+    # Operator confirms an event once buildings have committed.
+    "confirmed",
 )
 
 # Message sender roles for the in-app (event, building) thread. `agent` is the

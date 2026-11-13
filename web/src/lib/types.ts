@@ -107,7 +107,55 @@ export type EventPlan = {
   source_id: string
 }
 
+export type PlanRequest = {
+  buildingId: string
+  address: string | null
+  zip: string | null
+  propertyType: string | null
+  isEj: boolean
+  affluenceTier: string | null
+  capacityKw: number
+  kwRequested: number
+}
+
+export type Neighborhood = {
+  zip: string
+  isEj: boolean
+  buildings: number
+  kwRequested: number
+  recentCalls: number
+}
+
+export type PlanEquity = {
+  cooldownExcluded: string[]
+  requestedMw: number
+  requestedEjSharePct: number
+  naiveEjSharePct: number | null
+  neighborhoods: Neighborhood[]
+  requests: PlanRequest[]
+}
+
+// GET /event/current — the latest approved event, asked vs committed.
+export type CurrentEvent = {
+  id: number
+  windowLabel: string
+  targetMw: number
+  requestedMw: number
+  committedMw: number
+  responded: number
+  confirmed: boolean
+  buildings: Array<{
+    buildingId: string
+    address: string
+    zip: string | null
+    isEj: boolean
+    kwRequested: number
+    decision: { kind: 'yes' | 'no' | 'counter' | 'offer'; kw: number | null } | null
+  }>
+}
+
 export type EventDraftResponse = {
+  equity?: PlanEquity
   approved: boolean
   iterations: number
   criticReason?: string | null

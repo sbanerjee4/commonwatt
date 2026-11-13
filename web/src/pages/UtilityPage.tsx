@@ -1,31 +1,18 @@
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppHeader, Heading, Panel, Tag } from '../components/ui'
 import { BuildingMap } from '../components/BuildingMap'
 import { ChatThread } from '../components/ChatThread'
 import { apiGet, apiPost } from '../lib/api'
-import { getUnread } from '../lib/chat'
+import { getUnread, plainText } from '../lib/chat'
 import { regionForZip, siteTypeFor } from '../lib/grouping'
 import type {
 SavingsResponse, RecruitmentResponse, RecruitmentCandidate,
-  EventDraftResponse,
+  EventDraftResponse, PlanRequest, CurrentEvent,
   AllBuildingsResponse,
   MapBuilding,
 } from '../lib/types'
 
-
-// One or two sentences describing what the proposal changes, built from the
-// live plan + trace — no invented numbers.
-function buildProposalSummary(data: EventDraftResponse): string {
-  const p = data.plan
-  if (!p) return ''
-  const lead =
-    `This proposal asks ${p.buildingCount} buildings to reduce ` +
-    `${p.achievedMw.toFixed(1)} MW (target ${p.targetMw} MW), with ` +
-    `${p.ejSharePct.toFixed(1)}% of load from equity-priority zips (cap ${p.ejCapPct.toFixed(0)}%).`
-  const correction = data.trace.find((s) => s.kind === 'self_correct')
-  return correction ? `${lead} ${correction.summary}` : lead
-}
 
 function MapPanel() {
   return (
@@ -235,33 +222,41 @@ function RecruitmentDetail({
   )
 }
 
-// Pull a sensible default building id out of the drafted plan's portfolio,
-// so the operator composer is pre-filled with a building that is in the event.
-function OperatorAndAgent() {
-  const [targetMw, setTargetMw] = useState(20)
+const DRAFT_INPUTS = { ej_cap_pct: 0.35, current_temp_f: 88, window_label: '5–7 PM' }
+const fmtKw = (n: number) => `${Math.round(n).toLocaleString()} kW`
+
+function whyRow(r: PlanRequest): string {
+  const site = siteTypeFor(r.propertyType)
+  const area = r.isEj ? 'EJ zip, within cap' : r.affluenceTier === 'high' ? 'higher-income area' : 'non-EJ zip'
+  return `${site} · ${area}`
+}
+
+// Step 1–2: the utility states a need; the planner picks buildings under the
+// equity rules; the operator reviews where the burden lands and approves.
+function PlanPanel() {
+  const qc = useQueryClient()
+  const [targetMw, setTargetMw] = useState(5)
   const [showReasoning, setShowReasoning] = useState(false)
+  const [showAll, setShowAll] = useState(false)
 
   const draft = useMutation({
     mutationFn: (target: number) =>
-      apiPost<EventDraftResponse>(
-        '/event/draft',
-        { target_mw: target, ej_cap_pct: 0.35, current_temp_f: 88, window_label: '5–7 PM' },
-        { 'X-Role': 'operator' },
-      ),
+      apiPost<EventDraftResponse>('/event/draft', { target_mw: target, ...DRAFT_INPUTS }),
     onSuccess: () => approve.reset(),
   })
-
   const approve = useMutation({
     mutationFn: (target: number) =>
-      apiPost<{ ok: boolean; event_id: number; contacted: string[]; building_count: number }>(
-        '/event/approve',
-        { target_mw: target, ej_cap_pct: 0.35, current_temp_f: 88, window_label: '5–7 PM' },
-        { 'X-Role': 'operator' },
-      ),
+      apiPost<{ ok: boolean; event_id: number; building_count: number }>(
+        '/event/approve', { target_mw: target, ...DRAFT_INPUTS }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['current-event'] }),
   })
 
   const data = draft.data
   const plan = data?.plan
+  const eq = data?.equity
+  const requests = eq?.requests ?? []
+  const visible = showAll ? requests : requests.slice(0, 6)
+  const capPct = plan?.ejCapPct ?? 35
   const fmtTime = (ts: string) => {
     try {
       return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -272,103 +267,113 @@ function OperatorAndAgent() {
 
   return (
     <>
-      <Panel
-        title="Operator approval"
-        className="operator-panel"
-        tools={<Tag tone="attention">Agent recommendation</Tag>}
-      >
-        <p className="agent-origin">
-          The planning agent prepares an event proposal from live building data. Nothing is sent to
-          facilities until an operator approves it.
-        </p>
-
-        <label className="slider-label">
-          <span>
-            Target <b>{targetMw} MW</b>
-          </span>
-          <input
-            type="range"
-            min={5}
-            max={40}
-            value={targetMw}
-            onChange={(e) => setTargetMw(Number(e.target.value))}
-          />
-        </label>
-
-        <div className="action-row">
-          <button
-            className="ui-button primary"
-            onClick={() => draft.mutate(targetMw)}
-            disabled={draft.isPending}
-          >
-            {draft.isPending ? 'Planning…' : 'Draft proposal'}
+      <Panel title="1 · Plan the event" className="plan-panel" tools={<Tag tone="attention">Human approval required</Tag>}>
+        <div className="plan-need">
+          <label className="slider-label">
+            <span>Reduction needed today, {DRAFT_INPUTS.window_label}: <b>{targetMw} MW</b></span>
+            <input type="range" min={5} max={40} value={targetMw}
+              onChange={(e) => setTargetMw(Number(e.target.value))} />
+          </label>
+          <button className="ui-button primary" onClick={() => draft.mutate(targetMw)} disabled={draft.isPending}>
+            {draft.isPending ? 'Finding buildings…' : 'Find buildings'}
           </button>
         </div>
+        <p className="agent-origin">
+          Rules applied: at most {capPct.toFixed(0)}% of the load from Environmental Justice zips · buildings that
+          carried the last confirmed event sit this one out · schools and care facilities are spared above 95°F ·
+          each building is asked only for what the target still needs.
+        </p>
 
         {draft.isError && (
-          <p className="caption">
-            Could not reach the planner. Is `make serve` running, and is the Bedrock key set?
-          </p>
+          <p className="caption">Could not reach the planner. Is `make serve` running, and is the Bedrock key set?</p>
         )}
 
-        {plan && (
+        {plan && eq && (
           <>
-            {data && <p className="proposal-summary">{buildProposalSummary(data)}</p>}
-            <div className="event-facts">
+            <div className="equity-strip">
               <div>
-                <span>Target</span>
-                <b>{plan.targetMw} MW</b>
+                <span>Asked</span>
+                <b>{eq.requestedMw.toFixed(1)} MW</b>
+                <small>target {plan.targetMw} MW · {requests.length} buildings</small>
               </div>
               <div>
-                <span>Achieved</span>
-                <b>{plan.achievedMw.toFixed(1)} MW</b>
+                <span>Load from EJ zips</span>
+                <b>{eq.requestedEjSharePct.toFixed(0)}%</b>
+                <div className="cap-bar" aria-hidden="true">
+                  <i style={{ width: `${Math.min(100, eq.requestedEjSharePct)}%` }} />
+                  <em style={{ left: `${capPct}%` }} />
+                </div>
+                <small>
+                  cap {capPct.toFixed(0)}%
+                  {eq.naiveEjSharePct != null && eq.naiveEjSharePct > eq.requestedEjSharePct
+                    ? ` · ranking by load alone: ${eq.naiveEjSharePct.toFixed(0)}% (rejected)`
+                    : ''}
+                </small>
               </div>
               <div>
-                <span>Buildings</span>
-                <b>{plan.buildingCount}</b>
-              </div>
-              <div>
-                <span>EJ share</span>
-                <b>
-                  {plan.ejSharePct.toFixed(1)}% / {plan.ejCapPct.toFixed(0)}% cap
-                </b>
+                <span>Rotation</span>
+                <b>{eq.cooldownExcluded.length}</b>
+                <small>
+                  {eq.cooldownExcluded.length
+                    ? 'buildings rested after carrying the last event'
+                    : 'no buildings on cooldown'}
+                </small>
               </div>
             </div>
+
             {!plan.reachable && plan.tradeoff && (
-              <p className="caption">
-                <strong>Unreachable under cap:</strong> {plan.tradeoff}
-              </p>
+              <p className="tradeoff"><strong>Target not reachable under the cap.</strong> {plan.tradeoff}</p>
             )}
-            <div className="action-row">
-              <button
-                className="ui-button primary"
-                onClick={() => approve.mutate(targetMw)}
-                disabled={approve.isPending || !plan.reachable}
-              >
-                {approve.isPending ? 'Approving…' : 'Approve'}
-              </button>
-              <button className="ui-button ghost" onClick={() => { draft.reset(); approve.reset() }}>
-                Reject
-              </button>
-              {data && (
-                <button
-                  className="ui-button secondary"
-                  aria-expanded={showReasoning}
-                  onClick={() => setShowReasoning(true)}
-                >
-                  Expand reasoning
+
+            <div className="plan-tables">
+              <table>
+                <caption>Where the burden lands</caption>
+                <thead><tr><th>Neighborhood</th><th>Asked</th><th>Calls, last 5 events</th></tr></thead>
+                <tbody>
+                  {eq.neighborhoods.map((n) => (
+                    <tr key={n.zip}>
+                      <td>{regionForZip(n.zip)} <small className="mono">{n.zip}</small> {n.isEj && <Tag tone="attention">EJ</Tag>}</td>
+                      <td className="mono">{fmtKw(n.kwRequested)}</td>
+                      <td className="mono">{n.recentCalls}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <table>
+                <caption>Buildings asked</caption>
+                <thead><tr><th>Building</th><th>Ask / capacity</th></tr></thead>
+                <tbody>
+                  {visible.map((r) => (
+                    <tr key={r.buildingId}>
+                      <td>{r.address}<small>{whyRow(r)}</small></td>
+                      <td className="mono">
+                        {fmtKw(r.kwRequested)}
+                        <small>{r.kwRequested < r.capacityKw ? `of ${fmtKw(r.capacityKw)} · tops off target` : 'full capacity'}</small>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {requests.length > 6 && (
+                <button className="text-link" onClick={() => setShowAll(!showAll)}>
+                  {showAll ? 'Show fewer' : `Show all ${requests.length} buildings`}
                 </button>
               )}
             </div>
-            {approve.isError && (
-              <p className="caption">Could not approve the event. Please try again.</p>
-            )}
-            {approve.data && (
-              <div className="confirmation">
-                ✓ Event approved · {plan.achievedMw.toFixed(1)} MW across {approve.data.building_count} buildings
-                <span>{approve.data.building_count} building managers contacted automatically · {plan.source_id}</span>
-              </div>
-            )}
+
+            <div className="action-row">
+              <button className="ui-button primary" onClick={() => approve.mutate(targetMw)}
+                disabled={approve.isPending || !plan.reachable || !!approve.data}>
+                {approve.isPending ? 'Sending…' : approve.data ? 'Requests sent' : 'Approve & send requests'}
+              </button>
+              <button className="ui-button ghost" onClick={() => { draft.reset(); approve.reset() }}>
+                Discard
+              </button>
+              <button className="ui-button secondary" aria-expanded={showReasoning} onClick={() => setShowReasoning(true)}>
+                Why this plan?
+              </button>
+            </div>
+            {approve.isError && <p className="caption">Could not approve the event. Please try again.</p>}
           </>
         )}
       </Panel>
@@ -379,41 +384,103 @@ function OperatorAndAgent() {
           <aside className="reasoning-drawer">
             <div className="reasoning-drawer-head">
               <div>
-                <strong>Agent reasoning</strong>
+                <strong>How the plan was checked</strong>
                 <small>{data.trace.length} steps · {data.iterations} iteration(s)</small>
               </div>
-              <button
-                type="button"
-                className="ui-button ghost"
-                onClick={() => setShowReasoning(false)}
-              >
+              <button type="button" className="ui-button ghost" onClick={() => setShowReasoning(false)}>
                 Hide
               </button>
             </div>
             <ol className="trace-list">
-              {data.trace.map((step, index) => {
-                const isRevision = step.kind === 'self_correct'
-                return (
-                  <li className={isRevision ? 'revision' : ''} key={`${step.ts}-${index}`}>
-                    <time>{fmtTime(step.ts)}</time>
-                    <div>
-                      <strong>
-                        {step.kind === 'plan' && step.planVersion
-                          ? `Plan v${step.planVersion}`
-                          : step.kind.replace(/_/g, ' ')}
-                      </strong>
-                      {step.rejectedBy && <Tag tone="attention">Rejected: {step.rejectedBy}</Tag>}
-                      <p>{step.summary}</p>
-                    </div>
-                    {step.toolName && <code>{step.toolName}</code>}
-                  </li>
-                )
-              })}
+              {data.trace.map((step, index) => (
+                <li className={step.kind === 'self_correct' ? 'revision' : ''} key={`${step.ts}-${index}`}>
+                  <time>{fmtTime(step.ts)}</time>
+                  <div>
+                    <strong>
+                      {step.kind === 'plan' && step.planVersion ? `Plan v${step.planVersion}` : step.kind.replace(/_/g, ' ')}
+                    </strong>
+                    {step.rejectedBy && <Tag tone="attention">Rejected: {step.rejectedBy}</Tag>}
+                    <p>{plainText(step.summary)}</p>
+                  </div>
+                  {step.toolName && <code>{step.toolName}</code>}
+                </li>
+              ))}
             </ol>
           </aside>
         </div>
       )}
     </>
+  )
+}
+
+const DECISION_TEXT = { yes: 'Accepted', no: 'Declined', counter: 'Offered', offer: 'Offered' } as const
+
+// Step 3: buildings answer; the operator confirms what is committed.
+function ResponsesPanel() {
+  const qc = useQueryClient()
+  const current = useQuery({
+    queryKey: ['current-event'],
+    queryFn: () => apiGet<{ event: CurrentEvent | null }>('/event/current'),
+    refetchInterval: 4000,
+  })
+  const confirm = useMutation({
+    mutationFn: (id: number) => apiPost<{ ok: boolean }>(`/event/${id}/confirm`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['current-event'] }),
+  })
+
+  const ev = current.data?.event
+  if (!ev) {
+    return (
+      <Panel title="2 · Responses and confirmation" className="responses-panel">
+        <p className="decision-empty">Approve a plan to send requests. Building replies appear here as they arrive.</p>
+      </Panel>
+    )
+  }
+  const pct = ev.targetMw ? Math.min(100, (100 * ev.committedMw) / ev.targetMw) : 0
+  const short = ev.targetMw - ev.committedMw
+
+  return (
+    <Panel
+      title="2 · Responses and confirmation"
+      className="responses-panel"
+      tools={ev.confirmed ? <Tag>Confirmed</Tag> : <Tag tone="attention">{ev.responded}/{ev.buildings.length} replied</Tag>}
+    >
+      <div className="commit-progress">
+        <div>
+          <b>{ev.committedMw.toFixed(2)} MW</b> committed of {ev.targetMw} MW target · {ev.windowLabel}
+        </div>
+        <div className="cap-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
+      </div>
+      <table>
+        <thead><tr><th>Building</th><th>Asked</th><th>Reply</th></tr></thead>
+        <tbody>
+          {ev.buildings.map((b) => (
+            <tr key={b.buildingId}>
+              <td>{b.address} {b.isEj && <Tag tone="attention">EJ</Tag>}</td>
+              <td className="mono">{fmtKw(b.kwRequested)}</td>
+              <td>
+                {b.decision
+                  ? `${DECISION_TEXT[b.decision.kind]}${b.decision.kind !== 'no' && b.decision.kw != null ? ` ${fmtKw(b.decision.kw)}` : ''}`
+                  : <span className="muted">Waiting</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="action-row single">
+        <button className="ui-button primary" disabled={ev.confirmed || ev.committedMw <= 0 || confirm.isPending}
+          onClick={() => confirm.mutate(ev.id)}>
+          {ev.confirmed ? 'Event confirmed' : `Confirm event · ${ev.committedMw.toFixed(2)} MW`}
+        </button>
+      </div>
+      {!ev.confirmed && short > 0.005 && ev.responded > 0 && (
+        <p className="caption">
+          {short.toFixed(2)} MW short of target. You can confirm what is committed now; declines and smaller
+          offers are expected, and the next event rotates in other buildings.
+        </p>
+      )}
+      {confirm.isError && <p className="caption">Could not confirm the event. Please try again.</p>}
+    </Panel>
   )
 }
 
@@ -576,18 +643,24 @@ export function UtilityPage() {
       <main className="dashboard">
         <div className="dashboard-title">
           <div>
-            <p className="kicker">Event planning workspace</p>
-            <Heading level={1}>Greater Boston portfolio</Heading>
+            <p className="kicker">Peak event planning</p>
+            <Heading level={1}>Who should we ask to reduce today?</Heading>
+            <p>Hit the target without leaning on the same neighborhoods twice.</p>
           </div>
-          <Tag>Draft · 14:02 ET</Tag>
         </div>
         <div className="dashboard-grid">
+          <PlanPanel />
           <MapPanel />
-          <OperatorAndAgent />
-          <SeasonPanel />
-          <RecruitmentPanel />
-          <ConversationsPanel />
+          <ResponsesPanel />
         </div>
+        <details className="more-tools">
+          <summary>More tools: facility conversations, season outcomes, recruitment</summary>
+          <div className="dashboard-grid">
+            <ConversationsPanel />
+            <SeasonPanel />
+            <RecruitmentPanel />
+          </div>
+        </details>
       </main>
     </div>
   )
